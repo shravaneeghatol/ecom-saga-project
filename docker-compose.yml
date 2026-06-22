@@ -1,0 +1,120 @@
+version: "3.8"
+
+# ============================================================================
+# Choreography Saga + Outbox Pattern demo
+# 4 microservices, each with its own embedded H2 in-memory DB, talking only
+# through Kafka. Kafka runs in native KRaft mode (no Zookeeper).
+# NOTE: H2 is in-memory - data is wiped whenever a service container restarts.
+# ============================================================================
+
+x-spring-kafka-common: &spring-kafka-common
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+services:
+
+  # --------------------------------------------------------------------
+  # Kafka broker - KRaft mode (combined broker+controller, single node)
+  # --------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"   # internal/docker-network listener
+      - "9094:9094"   # host-accessible listener (use this from your laptop)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks: [saga-net]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 20s
+
+  # --------------------------------------------------------------------
+  # Kafka UI - browse topics, partitions, consumer groups, and messages
+  # http://localhost:8090
+  # --------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: saga-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks: [saga-net]
+
+  # --------------------------------------------------------------------
+  # Microservices
+  # Each runs its own embedded H2 in-memory database (no separate DB
+  # container, no persistent volume - data resets whenever a service
+  # container restarts). DB-per-service isolation is preserved since
+  # each service's H2 instance lives only inside that service's JVM.
+  # --------------------------------------------------------------------
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    ports: ["8081:8081"]
+    environment:
+      <<: *spring-kafka-common
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [saga-net]
+
+  inventory-service:
+    build: ./inventory-service
+    container_name: inventory-service
+    ports: ["8082:8082"]
+    environment:
+      <<: *spring-kafka-common
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [saga-net]
+
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    ports: ["8083:8083"]
+    environment:
+      <<: *spring-kafka-common
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [saga-net]
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    ports: ["8084:8084"]
+    environment:
+      <<: *spring-kafka-common
+    depends_on:
+      kafka: { condition: service_healthy }
+    networks: [saga-net]
+
+networks:
+  saga-net:
+    driver: bridge
+
+volumes:
+  kafka_data:

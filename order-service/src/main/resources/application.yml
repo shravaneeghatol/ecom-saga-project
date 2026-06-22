@@ -1,0 +1,81 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: order-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:orderdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    driver-class-name: org.h2.Driver
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+  kafka:
+    bootstrap-servers: localhost:9094
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.StringSerializer
+    consumer:
+      group-id: order-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.StringDeserializer
+        spring.json.value.default.type: com.example.order.event.SagaEvent
+        spring.json.use.type.headers: false
+        spring.json.trusted.packages: "*"
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,circuitbreakerevents
+  endpoint:
+    health:
+      show-details: always
+  health:
+    circuitbreakers:
+      enabled: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      kafkaPublisher:
+        # Use a count-based window of the last 10 calls to sendToKafka(...).
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        # Trip OPEN once >= 50% of those calls failed or timed out.
+        failure-rate-threshold: 50
+        # While OPEN, reject calls immediately for 10s (no blocking Kafka calls
+        # are attempted) before allowing trial calls through again.
+        wait-duration-in-open-state: 10s
+        # In HALF_OPEN, let 3 trial calls through to decide whether to go
+        # back to CLOSED or re-OPEN.
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        # kafkaTemplate.send(...).get(10, SECONDS) can legitimately take a
+        # few seconds under load - only count it "slow" well past that.
+        slow-call-duration-threshold: 8s
+        slow-call-rate-threshold: 50
+        record-exceptions:
+          - java.util.concurrent.TimeoutException
+          - org.apache.kafka.common.errors.TimeoutException
+          - org.springframework.kafka.KafkaException
+          - java.util.concurrent.ExecutionException
+
+logging:
+  level:
+    com.example.order: INFO
+    org.springframework.kafka.retrytopic: INFO
+    io.github.resilience4j: INFO
