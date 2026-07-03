@@ -33,6 +33,24 @@ public class OutboxEvent {
     private Instant createdAt;
     private Instant publishedAt;
 
+    // ── Retry / DLT fields ──────────────────────────────────────────────────
+    /** How many times this event has already failed to publish. Starts at 0. */
+    @Builder.Default
+    @Column(nullable = false)
+    private int retryCount = 0;
+
+    /**
+     * Maximum allowed publish attempts before this event is considered dead.
+     * Default = 3  →  4 total attempts (1 initial + 3 retries).
+     */
+    @Builder.Default
+    @Column(nullable = false)
+    private int maxRetries = 3;
+
+    /** Set when status transitions to FAILED (after exhausting retries). */
+    private Instant failedAt;
+    // ────────────────────────────────────────────────────────────────────────
+
     @PrePersist
     public void prePersist() {
         if (createdAt == null) createdAt = Instant.now();

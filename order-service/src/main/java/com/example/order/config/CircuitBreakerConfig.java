@@ -8,52 +8,94 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Wires up logging for the "kafkaPublisher" circuit breaker (declared in
- * application.yml under resilience4j.circuitbreaker.instances.kafkaPublisher).
+ * Registers event listeners for ALL circuit breakers used in order-service.
  *
- * The breaker protects OutboxPublisher's call to KafkaTemplate.send(...).get(...).
- * That call is the ONLY blocking call to an external system in this service
- * (every other write is to the local H2 DB inside the same transaction),
- * so it's the one place a circuit breaker is meaningful here:
+ * ┌──────────────────────┬────────────────────────────────────────────────────┐
+ * │ Breaker name         │ What it protects                                   │
+ * ├──────────────────────┼────────────────────────────────────────────────────┤
+ * │ kafkaPublisher       │ OutboxPublisher → KafkaEventSender.sendToKafka()   │
+ * │                      │ (blocking .get(10s) Kafka send in the outbox poller)│
+ * ├──────────────────────┼────────────────────────────────────────────────────┤
+ * │ inventoryService     │ HTTP calls to inventory-service                    │
+ * │ paymentService       │ HTTP calls to payment-service                      │
+ * │ notificationService  │ HTTP calls to notification-service                 │
+ * └──────────────────────┴────────────────────────────────────────────────────┘
  *
- *  - CLOSED:    normal operation, every PENDING outbox row is sent to Kafka.
- *  - OPEN:      Kafka has been failing/timing out beyond the configured
- *               threshold -> publishing is skipped immediately (no blocking
- *               .get(10s) calls pile up) and rows are left PENDING so the
- *               next scheduled poll (every 1.5s) picks them up again.
- *  - HALF_OPEN: after the wait duration, a handful of trial calls are let
- *               through to see if Kafka has recovered.
+ * All four breakers are configured in application.yml under
+ * resilience4j.circuitbreaker.instances.*
+ *
+ * State machine reminder:
+ *  CLOSED    → normal; calls pass through.
+ *  OPEN      → failure threshold exceeded; calls rejected immediately (fast-fail).
+ *  HALF_OPEN → trial period after waitDurationInOpenState; limited calls let through.
+ *              If they succeed → back to CLOSED.  If they fail → back to OPEN.
  */
 @Configuration
 @RequiredArgsConstructor
 @Slf4j
 public class CircuitBreakerConfig {
 
-    public static final String KAFKA_PUBLISHER_BREAKER = "kafkaPublisher";
+    // ── Breaker names (must match application.yml keys exactly) ───────────────
+    public static final String KAFKA_PUBLISHER_BREAKER    = "kafkaPublisher";
+    public static final String INVENTORY_SERVICE_BREAKER  = "inventoryService";
+    public static final String PAYMENT_SERVICE_BREAKER    = "paymentService";
+    public static final String NOTIFICATION_SERVICE_BREAKER = "notificationService";
 
     private final CircuitBreakerRegistry circuitBreakerRegistry;
 
     @PostConstruct
     public void registerEventListeners() {
-        CircuitBreaker breaker = circuitBreakerRegistry.circuitBreaker(KAFKA_PUBLISHER_BREAKER);
+        attachListeners(KAFKA_PUBLISHER_BREAKER);
+        attachListeners(INVENTORY_SERVICE_BREAKER);
+        attachListeners(PAYMENT_SERVICE_BREAKER);
+        attachListeners(NOTIFICATION_SERVICE_BREAKER);
+    }
+
+    /**
+     * Attaches state-transition, error, call-not-permitted, and success listeners
+     * to the named breaker. All four breakers get the same logging behaviour so
+     * you have a uniform audit trail in the logs.
+     */
+    private void attachListeners(String breakerName) {
+        CircuitBreaker breaker = circuitBreakerRegistry.circuitBreaker(breakerName);
 
         breaker.getEventPublisher()
+
+                // ── State change (CLOSED → OPEN, OPEN → HALF_OPEN, etc.) ──────
                 .onStateTransition(event -> log.warn(
-                        "[CIRCUIT-BREAKER:{}] state transition: {} -> {}",
-                        KAFKA_PUBLISHER_BREAKER,
+                        "[CIRCUIT-BREAKER:{}] ⚡ STATE CHANGE: {} → {}",
+                        breakerName,
                         event.getStateTransition().getFromState(),
                         event.getStateTransition().getToState()))
+
+                // ── Individual call failure ────────────────────────────────────
                 .onError(event -> log.error(
-                        "[CIRCUIT-BREAKER:{}] call failed after {} ms: {}",
-                        KAFKA_PUBLISHER_BREAKER,
+                        "[CIRCUIT-BREAKER:{}] ❌ call FAILED after {} ms | error: {}",
+                        breakerName,
                         event.getElapsedDuration().toMillis(),
                         event.getThrowable() == null ? "n/a" : event.getThrowable().toString()))
+
+                // ── Call rejected because breaker is OPEN ──────────────────────
                 .onCallNotPermitted(event -> log.warn(
-                        "[CIRCUIT-BREAKER:{}] call rejected - breaker is OPEN, failing fast",
-                        KAFKA_PUBLISHER_BREAKER))
+                        "[CIRCUIT-BREAKER:{}] 🚫 call REJECTED — breaker is OPEN, failing fast",
+                        breakerName))
+
+                // ── Successful call ────────────────────────────────────────────
                 .onSuccess(event -> log.debug(
-                        "[CIRCUIT-BREAKER:{}] call succeeded in {} ms",
-                        KAFKA_PUBLISHER_BREAKER,
-                        event.getElapsedDuration().toMillis()));
+                        "[CIRCUIT-BREAKER:{}] ✅ call SUCCEEDED in {} ms",
+                        breakerName,
+                        event.getElapsedDuration().toMillis()))
+
+                // ── Slow call (exceeds slow-call-duration-threshold) ───────────
+                .onSlowCallRateExceeded(event -> log.warn(
+                        "[CIRCUIT-BREAKER:{}] 🐢 SLOW call rate exceeded threshold: {} %",
+                        breakerName,
+                        event.getSlowCallRate()))
+
+                // ── Failure rate exceeded (just before OPEN transition) ────────
+                .onFailureRateExceeded(event -> log.warn(
+                        "[CIRCUIT-BREAKER:{}] 🔥 FAILURE rate exceeded threshold: {} %",
+                        breakerName,
+                        event.getFailureRate()));
     }
 }

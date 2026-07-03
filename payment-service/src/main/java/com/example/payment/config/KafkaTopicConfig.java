@@ -9,6 +9,7 @@ import org.springframework.kafka.config.TopicBuilder;
 public class KafkaTopicConfig {
 
     public static final String PAYMENT_EVENTS_TOPIC = "payment.events";
+    public static final String PAYMENT_EVENTS_FAILURE_TOPIC = "payment.events-failure";
 
     @Bean
     public NewTopic paymentEventsTopic() {
@@ -17,4 +18,13 @@ public class KafkaTopicConfig {
                 .replicas(1)
                 .build();
     }
+
+    @Bean
+    public NewTopic paymentFailureTopic() {
+        return TopicBuilder.name(PAYMENT_EVENTS_FAILURE_TOPIC)
+                .partitions(1)
+                .replicas(1)
+                .build();
+    }
+
 }

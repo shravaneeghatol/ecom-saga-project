@@ -9,11 +9,22 @@ import org.springframework.kafka.config.TopicBuilder;
 public class KafkaTopicConfig {
 
     public static final String NOTIFICATION_EVENTS_TOPIC = "notification.events";
+    public static final String NOTIFICATION_EVENTS_FAILURE_TOPIC = "notification.events-failure";
+
+
 
     @Bean
     public NewTopic notificationEventsTopic() {
         return TopicBuilder.name(NOTIFICATION_EVENTS_TOPIC)
                 .partitions(3)
+                .replicas(1)
+                .build();
+    }
+
+    @Bean
+    public NewTopic notificationFailureTopic() {
+        return TopicBuilder.name(NOTIFICATION_EVENTS_FAILURE_TOPIC)
+                .partitions(1)
                 .replicas(1)
                 .build();
     }

@@ -1,5 +1,6 @@
 server:
   port: 8081
+
 spring:
   application:
     name: order-service
@@ -20,26 +21,40 @@ spring:
       ddl-auto: update
 
   kafka:
-    bootstrap-servers: localhost:9094
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
     consumer:
       group-id: order-service-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
-      properties:
-        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
-        spring.json.value.default.type: com.example.order.event.SagaEvent
-        spring.json.use.type.headers: false
-        spring.json.trusted.packages: "*"
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+    properties:
+      spring.json.trusted.packages: "com.example.order.event"
+      spring.json.value.default.type: "com.example.order.event.SagaEvent"
+      spring.json.use.type.headers: false
 
+# ── Downstream service URLs ────────────────────────────────────────────────────
+# Order-service is event-driven (choreography) so it does NOT call other services
+# via HTTP in normal saga flow. These URLs are here for:
+#   1. Admin / health-check endpoints (e.g. GET /actuator/health on each service)
+#   2. Future orchestration calls if you ever add a manual retry/status endpoint
+# Each URL is overridable via env-var for Docker/K8s deployments.
+services:
+  inventory:
+    url: ${INVENTORY_SERVICE_URL:http://localhost:8082}
+  payment:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+  notification:
+    url: ${NOTIFICATION_SERVICE_URL:http://localhost:8084}
+
+# ── Actuator ───────────────────────────────────────────────────────────────────
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,circuitbreakers,circuitbreakerevents
+        include: health,info,circuitbreakers,circuitbreakerevents,metrics
   endpoint:
     health:
       show-details: always
@@ -47,32 +62,99 @@ management:
     circuitbreakers:
       enabled: true
 
+# ── Resilience4j Circuit Breakers ──────────────────────────────────────────────
+#
+#  Four breakers are declared here, one per concern:
+#
+#  1. kafkaPublisher      – wraps OutboxPublisher → KafkaEventSender.sendToKafka()
+#                           Protects the blocking .get(10s) Kafka send from piling
+#                           up when the broker is down or overloaded.
+#
+#  2. inventoryService    – wraps any HTTP call to inventory-service
+#                           (health-check / future admin endpoints).
+#
+#  3. paymentService      – wraps any HTTP call to payment-service.
+#
+#  4. notificationService – wraps any HTTP call to notification-service.
+#
+#  All HTTP breakers share the same conservative defaults but are kept as
+#  separate instances so each service's failure rate is tracked independently
+#  (one flaky service won't cause another's breaker to trip).
+# ──────────────────────────────────────────────────────────────────────────────
 resilience4j:
   circuitbreaker:
     instances:
+
+      # ── 1. Kafka publisher breaker ─────────────────────────────────────────
       kafkaPublisher:
-        # Use a count-based window of the last 10 calls to sendToKafka(...).
         sliding-window-type: COUNT_BASED
-        sliding-window-size: 10
-        minimum-number-of-calls: 5
-        # Trip OPEN once >= 50% of those calls failed or timed out.
-        failure-rate-threshold: 50
-        # While OPEN, reject calls immediately for 10s (no blocking Kafka calls
-        # are attempted) before allowing trial calls through again.
-        wait-duration-in-open-state: 10s
-        # In HALF_OPEN, let 3 trial calls through to decide whether to go
-        # back to CLOSED or re-OPEN.
+        sliding-window-size: 10          # evaluate last 10 Kafka send calls
+        minimum-number-of-calls: 5       # need ≥5 calls before failure-rate is computed
+        failure-rate-threshold: 50       # OPEN if ≥50 % of calls fail / are slow
+        slow-call-duration-threshold: 8s # a .get(10s) that takes >8s is "slow"
+        slow-call-rate-threshold: 50     # OPEN if ≥50 % of calls are slow
+        wait-duration-in-open-state: 10s # stay OPEN for 10s then go HALF-OPEN
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
-        # kafkaTemplate.send(...).get(10, SECONDS) can legitimately take a
-        # few seconds under load - only count it "slow" well past that.
-        slow-call-duration-threshold: 8s
-        slow-call-rate-threshold: 50
         record-exceptions:
           - java.util.concurrent.TimeoutException
           - org.apache.kafka.common.errors.TimeoutException
           - org.springframework.kafka.KafkaException
           - java.util.concurrent.ExecutionException
+
+      # ── 2. Inventory-service HTTP breaker ─────────────────────────────────
+      inventoryService:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50       # OPEN after 50% HTTP failures
+        slow-call-duration-threshold: 3s # HTTP calls >3s are considered slow
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 15s # wait 15s before allowing trial calls
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException.ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException.InternalServerError
+
+      # ── 3. Payment-service HTTP breaker ───────────────────────────────────
+      paymentService:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException.ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException.InternalServerError
+
+      # ── 4. Notification-service HTTP breaker ──────────────────────────────
+      notificationService:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        record-exceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException.ServiceUnavailable
+          - org.springframework.web.reactive.function.client.WebClientResponseException.InternalServerError
 
 logging:
   level:

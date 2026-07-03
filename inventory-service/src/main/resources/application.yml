@@ -1,5 +1,5 @@
 server:
-  port: 8082
+  port: 8085
 
 spring:
   application:
@@ -10,6 +10,12 @@ spring:
     driver-class-name: org.h2.Driver
     username: root
     password: root
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
 
   h2:
     console:
@@ -23,64 +29,150 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
 
   kafka:
-    bootstrap-servers: localhost:9094
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        retries: 3
+        acks: all
+        compression-type: snappy
+        max-in-flight-requests-per-connection: 5
     consumer:
-      group-id: order-service-group
+      group-id: inventory-service-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
-        spring.json.value.default.type: com.example.inventory.event.SagaEvent
+        spring.json.trusted.packages: "com.example.inventory.event"
+        spring.json.value.default.type: "com.example.inventory.event.SagaEvent"
         spring.json.use.type.headers: false
-        spring.json.trusted.packages: "*"
+        max-poll-records: 100
+        fetch-min-bytes: 1024
+        fetch-max-wait: 500
+    listener:
+      missing-topics-fatal: false
+      admin:
+        auto-create: true
+      ack-mode: MANUAL_IMMEDIATE
+
+services:
+  payment:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:8082}
+  notification:
+    url: ${NOTIFICATION_SERVICE_URL:http://localhost:8083}
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,circuitbreakers,circuitbreakerevents
+        include: health,info,circuitbreakers,circuitbreakerevents,metrics,prometheus
   endpoint:
     health:
       show-details: always
+    circuitbreakers:
+      enabled: true
+    metrics:
+      enabled: true
   health:
     circuitbreakers:
       enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
 
 resilience4j:
   circuitbreaker:
-    instances:
-      kafkaPublisher:
-        # Use a count-based window of the last 10 calls to sendToKafka(...).
+    configs:
+      default:
         sliding-window-type: COUNT_BASED
         sliding-window-size: 10
         minimum-number-of-calls: 5
-        # Trip OPEN once >= 50% of those calls failed or timed out.
         failure-rate-threshold: 50
-        # While OPEN, reject calls immediately for 10s (no blocking Kafka calls
-        # are attempted) before allowing trial calls through again.
         wait-duration-in-open-state: 10s
-        # In HALF_OPEN, let 3 trial calls through to decide whether to go
-        # back to CLOSED or re-OPEN.
         permitted-number-of-calls-in-half-open-state: 3
         automatic-transition-from-open-to-half-open-enabled: true
-        # kafkaTemplate.send(...).get(10, SECONDS) can legitimately take a
-        # few seconds under load - only count it "slow" well past that.
-        slow-call-duration-threshold: 8s
+        slow-call-duration-threshold: 3s
         slow-call-rate-threshold: 50
         record-exceptions:
           - java.util.concurrent.TimeoutException
           - org.apache.kafka.common.errors.TimeoutException
           - org.springframework.kafka.KafkaException
           - java.util.concurrent.ExecutionException
+          - com.example.inventory.exception.ServiceUnavailableException
+    instances:
+      kafkaPublisher:
+        base-config: default
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+      paymentServiceCB:
+        base-config: default
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+      notificationServiceCB:
+        base-config: default
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+      outboxProcessorCB:
+        base-config: default
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 1s
+        retry-exceptions:
+          - java.util.concurrent.TimeoutException
+          - org.apache.kafka.common.errors.TimeoutException
+          - org.springframework.kafka.KafkaException
+          - com.example.inventory.exception.ServiceUnavailableException
+          - org.springframework.dao.DataAccessException
+          - org.springframework.dao.OptimisticLockingFailureException
+    instances:
+      kafkaRetry:
+        base-config: default
+        max-attempts: 3
+        wait-duration: 2s
+      paymentRetry:
+        base-config: default
+        max-attempts: 3
+        wait-duration: 2s
+      notificationRetry:
+        base-config: default
+        max-attempts: 2
+        wait-duration: 1s
+
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+    instances:
+      kafkaTimeout:
+        base-config: default
+        timeout-duration: 10s
 
 logging:
   level:
-    com.example.inventory: INFO
+    com.example.inventory: DEBUG
     org.springframework.kafka.retrytopic: INFO
     io.github.resilience4j: INFO
+    org.springframework.web.client: DEBUG
+    org.springframework.transaction: DEBUG
+    org.hibernate.SQL: DEBUG

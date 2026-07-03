@@ -1,25 +1,27 @@
 package com.example.order.dto;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class CreateOrderRequest {
-    private String customerId;
     private String productId;
     private Integer quantity;
-    private Double amount;
+    private String customerId;
+    private Double totalAmount;
 
-    // --- test/demo controls to deliberately trigger saga failure paths ---
+    // Getter for amount (used by OrderService)
+    public Double getAmount() {
+        return this.totalAmount;
+    }
 
-    /** Forces inventory-service to report "insufficient stock" (immediate business failure, no retries). */
-    private boolean simulateInventoryFailure = false;
-
-    /** Forces payment-service to decline the payment (immediate business failure, no retries). */
-    private boolean simulatePaymentFailure = false;
-
-    /**
-     * Forces the named service to throw a transient exception on every attempt,
-     * exercising the retry topics -> DLT path. One of: "inventory", "payment", "notification", or null.
-     */
-    private String simulateTransientErrorAt;
+    // Setter for amount (maps to totalAmount)
+    public void setAmount(Double amount) {
+        this.totalAmount = amount;
+    }
 }

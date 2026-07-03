@@ -31,11 +31,17 @@ public class Order {
     private Instant createdAt;
     private Instant updatedAt;
 
+    @Column(name = "total_amount")
+    private Double totalAmount;
+
     @PrePersist
     public void prePersist() {
         createdAt = Instant.now();
         updatedAt = Instant.now();
         if (status == null) status = OrderStatus.CREATED;
+        if (totalAmount == null && amount != null) {
+            totalAmount = amount;
+        }
     }
 
     @PreUpdate

@@ -1,10 +1,10 @@
 package com.example.order.service;
 
 import com.example.order.config.KafkaTopicConfig;
+import com.example.order.dto.CreateOrderRequest;
 import com.example.order.entity.Order;
 import com.example.order.entity.OrderStatus;
 import com.example.order.entity.OutboxEvent;
-import com.example.order.dto.CreateOrderRequest;
 import com.example.order.event.SagaEvent;
 import com.example.order.repository.OrderRepository;
 import com.example.order.repository.OutboxEventRepository;
@@ -27,19 +27,17 @@ public class OrderService {
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
 
-    /**
-     * Step 1 of the saga. Creates the Order AND the OrderCreated outbox row
-     * in one local transaction, then returns. The OutboxPublisher ships the
-     * event to Kafka asynchronously - this is the Outbox pattern in action.
-     */
     @Transactional
     public Order createOrder(CreateOrderRequest req) {
+        Double amount = req.getAmount() != null ? req.getAmount() : 0.0;
+
         Order order = Order.builder()
                 .customerId(req.getCustomerId())
                 .productId(req.getProductId())
                 .quantity(req.getQuantity())
-                .amount(req.getAmount())
+                .amount(amount)
                 .status(OrderStatus.CREATED)
+                .totalAmount(amount)
                 .build();
         order = orderRepository.save(order);
 
@@ -49,16 +47,13 @@ public class OrderService {
         payload.put("productId", order.getProductId());
         payload.put("quantity", order.getQuantity());
         payload.put("amount", order.getAmount());
-        payload.put("simulateInventoryFailure", req.isSimulateInventoryFailure());
-        payload.put("simulatePaymentFailure", req.isSimulatePaymentFailure());
-        payload.put("simulateTransientError", req.getSimulateTransientErrorAt());
+        payload.put("totalAmount", order.getTotalAmount());
 
         saveOutbox(order.getId().toString(), "OrderCreated", KafkaTopicConfig.ORDER_EVENTS_TOPIC, payload);
         log.info("Order {} CREATED, OrderCreated event queued in outbox", order.getId());
         return order;
     }
 
-    /** Compensation: roll the order back when any downstream step fails (business failure OR DLT-exhausted retries). */
     @Transactional
     public void cancelOrder(String orderId, String reason) {
         orderRepository.findById(UUID.fromString(orderId)).ifPresent(order -> {
@@ -70,10 +65,21 @@ public class OrderService {
             order.setFailureReason(reason);
             orderRepository.save(order);
             log.warn("Order {} CANCELLED (compensating). Reason: {}", orderId, reason);
+
+            // Publish to failure topic via Outbox
+            Map<String, Object> failurePayload = new HashMap<>();
+            failurePayload.put("orderId", orderId);
+            failurePayload.put("reason", reason);
+            failurePayload.put("failureType", "BUSINESS");
+            failurePayload.put("customerId", order.getCustomerId());
+            failurePayload.put("productId", order.getProductId());
+            failurePayload.put("amount", order.getAmount());
+
+            saveOutbox(orderId, "OrderFailed", KafkaTopicConfig.ORDER_EVENTS_FAILURE_TOPIC, failurePayload);
+            log.warn("[FAILURE-TOPIC] Order {} → order.events-failure | reason: {}", orderId, reason);
         });
     }
 
-    /** Final success confirmation - reached only once every downstream service has succeeded. */
     @Transactional
     public void markCompleted(String orderId) {
         orderRepository.findById(UUID.fromString(orderId)).ifPresent(order -> {
@@ -98,7 +104,9 @@ public class OrderService {
                     .payload(json)
                     .build();
             outboxEventRepository.save(outbox);
+            log.debug("Outbox event saved: type={}, topic={}, aggregateId={}", eventType, topic, aggregateId);
         } catch (Exception e) {
+            log.error("Failed to serialize saga event: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to serialize saga event", e);
         }
     }

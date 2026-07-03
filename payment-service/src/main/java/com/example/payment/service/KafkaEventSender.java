@@ -2,7 +2,10 @@ package com.example.payment.service;
 
 import com.example.payment.domain.OutboxEvent;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
@@ -12,7 +15,7 @@ import static com.example.payment.config.CircuitBreakerConfig.KAFKA_PUBLISHER_BR
 
 /**
  * Isolates the single blocking call to Kafka (kafkaTemplate.send(...).get(...))
- * behind the "kafkaPublisher" circuit breaker.
+ * behind the "kafkaPublisher" circuit breaker and retry mechanism.
  *
  * This is deliberately a SEPARATE bean from OutboxPublisher: Spring implements
  * @CircuitBreaker (like @Transactional, @Retryable, etc.) via a dynamic proxy
@@ -24,13 +27,18 @@ import static com.example.payment.config.CircuitBreakerConfig.KAFKA_PUBLISHER_BR
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class KafkaEventSender {
 
+    @Qualifier("stringKafkaTemplate")
     private final KafkaTemplate<String, String> kafkaTemplate;
 
     @CircuitBreaker(name = KAFKA_PUBLISHER_BREAKER)
+    @Retry(name = "kafkaRetry")
     public void sendToKafka(OutboxEvent event) throws Exception {
+        log.debug("Sending event to Kafka: topic={}, key={}", event.getTopic(), event.getPartitionKey());
         kafkaTemplate.send(event.getTopic(), event.getPartitionKey(), event.getPayload())
                 .get(10, TimeUnit.SECONDS);
+        log.debug("Event sent successfully to Kafka");
     }
 }

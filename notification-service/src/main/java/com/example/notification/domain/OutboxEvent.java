@@ -33,6 +33,18 @@ public class OutboxEvent {
     private Instant createdAt;
     private Instant publishedAt;
 
+    // ── Retry / DLT fields ──────────────────────────────────────────────────
+    @Builder.Default
+    @Column(nullable = false)
+    private int retryCount = 0;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private int maxRetries = 3;
+
+    private Instant failedAt;
+    // ────────────────────────────────────────────────────────────────────────
+
     @PrePersist
     public void prePersist() {
         if (createdAt == null) createdAt = Instant.now();

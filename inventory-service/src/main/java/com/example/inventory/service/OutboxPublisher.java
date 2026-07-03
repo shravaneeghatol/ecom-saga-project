@@ -3,34 +3,24 @@ package com.example.inventory.service;
 import com.example.inventory.domain.OutboxEvent;
 import com.example.inventory.domain.OutboxStatus;
 import com.example.inventory.repository.OutboxEventRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.dao.DataAccessException;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * THE OUTBOX PATTERN POLLER.
- * Runs on a fixed schedule, finds PENDING rows written by business transactions,
- * and publishes them to Kafka. This decouples the local DB commit from the Kafka
- * publish, so a saga step is never "half done" (DB committed but event lost).
- *
- * CIRCUIT BREAKER: the only blocking external call in this service is the
- * Kafka send (delegated to KafkaEventSender, which wraps it with
- * kafkaTemplate.send(...).get(10, SECONDS)). If the broker is down or slow,
- * that .get() blocks for up to 10s PER MESSAGE - with 50 pending rows that's
- * up to 500s of a scheduler thread doing nothing useful, every 1.5s tick.
- * The "kafkaPublisher" circuit breaker (config in application.yml) watches
- * the failure rate of KafkaEventSender.sendToKafka(...) and, once it trips
- * OPEN, calls are rejected immediately (CallNotPermittedException) instead
- * of blocking - the batch is abandoned for this tick and every remaining
- * row simply stays PENDING, to be retried on the next poll once the
- * breaker lets calls through again (HALF_OPEN -> CLOSED).
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -38,36 +28,164 @@ public class OutboxPublisher {
 
     private final OutboxEventRepository outboxEventRepository;
     private final KafkaEventSender kafkaEventSender;
+    @Qualifier("stringKafkaTemplate")
+    private final KafkaTemplate<String, String> stringKafkaTemplate;
+    private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+
+    // Track processing status to prevent duplicate processing
+    private final Map<String, Boolean> processingCache = new ConcurrentHashMap<>();
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
 
     @Scheduled(fixedDelay = 1500)
     @Transactional
     public void publishPendingEvents() {
-        List<OutboxEvent> events = outboxEventRepository.findTop50ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING);
-
-        for (int i = 0; i < events.size(); i++) {
-            OutboxEvent event = events.get(i);
+        // Circuit breaker for outbox processing itself
+        if (consecutiveFailures.get() > 10) {
+            log.warn("[OUTBOX] Consecutive failures exceeded 10, backing off for 5 seconds");
             try {
-                kafkaEventSender.sendToKafka(event);
-                event.setStatus(OutboxStatus.PUBLISHED);
-                event.setPublishedAt(Instant.now());
-                outboxEventRepository.save(event);
-                log.info("[OUTBOX] published {} (orderId={}) -> topic '{}'",
-                        event.getEventType(), event.getAggregateId(), event.getTopic());
-            } catch (CallNotPermittedException open) {
-                // Breaker is OPEN: stop hammering Kafka for the rest of this batch too.
-                // Every row from here on is left PENDING (untouched) so the next
-                // scheduled poll retries it once the breaker allows calls again.
-                log.warn("[OUTBOX] circuit breaker OPEN - skipping remaining {} pending event(s) this tick, " +
-                                "will retry on next poll. First skipped: {} (orderId={})",
-                        events.size() - i, event.getEventType(), event.getAggregateId());
-                return;
-            } catch (Exception ex) {
-                // Real failure (serialization issue, broker rejected the record, etc).
-                // Leave it PENDING too - this repo's poller only ever re-reads PENDING rows,
-                // so marking it FAILED here would mean it's silently dropped forever.
-                log.error("[OUTBOX] failed to publish event {} (orderId={}): {}. Will retry on next poll.",
-                        event.getId(), event.getAggregateId(), ex.getMessage());
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
+            consecutiveFailures.set(0);
+            return;
+        }
+
+        try {
+            List<OutboxEvent> events = outboxEventRepository
+                    .findTop50ByStatusOrderByCreatedAtAsc(OutboxStatus.PENDING);
+
+            if (events.isEmpty()) {
+                consecutiveFailures.set(0);
+                return;
+            }
+
+            log.info("[OUTBOX] Processing {} pending events", events.size());
+
+            int processed = 0;
+            int failed = 0;
+
+            for (OutboxEvent event : events) {
+                String eventKey = event.getId().toString();
+
+                // Skip if already being processed
+                if (processingCache.putIfAbsent(eventKey, Boolean.TRUE) != null) {
+                    log.debug("[OUTBOX] Event {} already being processed, skipping", eventKey);
+                    continue;
+                }
+
+                try {
+                    // Check if this is a duplicate published event
+                    if (event.getStatus() == OutboxStatus.PUBLISHED) {
+                        log.warn("[OUTBOX] Event {} already published, but still in processing", eventKey);
+                        processingCache.remove(eventKey);
+                        continue;
+                    }
+
+                    kafkaEventSender.sendToKafka(event);
+
+                    // Update status only if not already published (handles race conditions)
+                    if (event.getStatus() != OutboxStatus.PUBLISHED) {
+                        event.setStatus(OutboxStatus.PUBLISHED);
+                        event.setPublishedAt(Instant.now());
+                        outboxEventRepository.save(event);
+                        processed++;
+
+                        // Metrics
+                        meterRegistry.counter("outbox.published",
+                                "eventType", event.getEventType(),
+                                "topic", event.getTopic()).increment();
+
+                        log.info("[OUTBOX] published {} (orderId={}) -> topic '{}'",
+                                event.getEventType(), event.getAggregateId(), event.getTopic());
+                    }
+
+                    consecutiveFailures.set(0);
+
+                } catch (CallNotPermittedException open) {
+                    // CB is OPEN — stop entire batch
+                    log.warn("[OUTBOX] circuit breaker OPEN — Kafka/payment-service appears DOWN. " +
+                                    "Skipping {} remaining event(s). Will retry on next poll.",
+                            events.size() - (processed + failed));
+
+                    meterRegistry.counter("outbox.circuit_breaker_open").increment();
+                    processingCache.remove(eventKey);
+                    return; // Stop processing this batch
+
+                } catch (Exception ex) {
+                    // Kafka call failed — increment retry counter
+                    failed++;
+                    event.setRetryCount(event.getRetryCount() + 1);
+
+                    if (event.getRetryCount() > event.getMaxRetries()) {
+                        // Max retries exhausted → send to DLT
+                        log.error("[OUTBOX] event {} (orderId={}) exhausted {} retries → sending to DLT. Error: {}",
+                                event.getId(), event.getAggregateId(), event.getMaxRetries(), ex.getMessage());
+
+                        publishToDlt(event, ex.getMessage());
+                        event.setStatus(OutboxStatus.FAILED);
+                        event.setFailedAt(Instant.now());
+
+                        meterRegistry.counter("outbox.failed",
+                                "eventType", event.getEventType()).increment();
+                    } else {
+                        // Still has retries left — stays PENDING
+                        log.warn("[OUTBOX] event {} (orderId={}) failed (attempt {}/{}). Will retry. Error: {}",
+                                event.getId(), event.getAggregateId(),
+                                event.getRetryCount(), event.getMaxRetries(), ex.getMessage());
+
+                        meterRegistry.counter("outbox.retry",
+                                "attempt", String.valueOf(event.getRetryCount())).increment();
+                    }
+
+                    outboxEventRepository.save(event);
+                    consecutiveFailures.incrementAndGet();
+                } finally {
+                    processingCache.remove(eventKey);
+                }
+            }
+
+            // Log summary
+            if (processed > 0 || failed > 0) {
+                log.info("[OUTBOX] Batch complete: {} published, {} failed, {} total",
+                        processed, failed, events.size());
+            }
+
+        } catch (DataAccessException dae) {
+            log.error("[OUTBOX] Database error processing outbox: {}", dae.getMessage());
+            consecutiveFailures.incrementAndGet();
+        } catch (Exception e) {
+            log.error("[OUTBOX] Unexpected error processing outbox: {}", e.getMessage(), e);
+            consecutiveFailures.incrementAndGet();
+        }
+    }
+
+    private void publishToDlt(OutboxEvent event, String errorReason) {
+        try {
+            Map<String, Object> dltPayload = Map.of(
+                    "originalTopic", event.getTopic(),
+                    "originalPayload", event.getPayload(),
+                    "aggregateId", event.getAggregateId(),
+                    "eventType", event.getEventType(),
+                    "retryCount", event.getRetryCount(),
+                    "errorReason", errorReason != null ? errorReason : "unknown",
+                    "failedAt", Instant.now().toString()
+            );
+
+            String dltJson = objectMapper.writeValueAsString(dltPayload);
+            stringKafkaTemplate.send("inventory.events-dlt", event.getAggregateId(), dltJson);
+
+            log.error("[DLT] published failed event for orderId={} to inventory.events-dlt",
+                    event.getAggregateId());
+
+            meterRegistry.counter("outbox.dlt_published").increment();
+
+        } catch (Exception dltEx) {
+            log.error("[DLT] CRITICAL — could not publish to DLT for orderId={}: {}",
+                    event.getAggregateId(), dltEx.getMessage());
+
+            meterRegistry.counter("outbox.dlt_failed").increment();
         }
     }
 }

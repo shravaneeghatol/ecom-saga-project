@@ -4,9 +4,16 @@ import com.example.payment.domain.Payment;
 import com.example.payment.domain.PaymentStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     Optional<Payment> findByOrderIdAndStatus(String orderId, PaymentStatus status);
+
+    List<Payment> findByOrderId(String orderId);
+
+    long countByStatus(PaymentStatus status);
+
+    Optional<Payment> findTopByOrderIdOrderByCreatedAtDesc(String orderId);
 }
