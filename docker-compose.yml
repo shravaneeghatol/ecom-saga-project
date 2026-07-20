@@ -20,8 +20,8 @@ services:
     container_name: kafka
     hostname: kafka
     ports:
-      - "9092:9092"   # internal/docker-network listener
-      - "9094:9094"   # host-accessible listener (use this from your laptop)
+      - "${KAFKA_PORT_INTERNAL:-9092}:9092"   # internal/docker-network listener
+      - "${KAFKA_PORT_EXTERNAL:-9094}:9094"   # host-accessible listener (use this from your laptop)
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -55,7 +55,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     ports:
-      - "8090:8080"
+      - "${KAFKA_UI_PORT:-8090}:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: saga-cluster
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
@@ -75,12 +75,14 @@ services:
   order-service:
     build: ./order-service
     container_name: order-service
-    ports: ["8081:8081"]
+    ports: ["${ORDER_SERVICE_PORT:-8081}:8081"]
     environment:
       <<: *spring-kafka-common
-      INVENTORY_SERVICE_URL: http://inventory-service:8082
-      PAYMENT_SERVICE_URL: http://payment-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      INVENTORY_SERVICE_URL: ${INVENTORY_SERVICE_URL}
+      PAYMENT_SERVICE_URL: ${PAYMENT_SERVICE_URL}
+      NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL}
     depends_on:
       kafka: { condition: service_healthy }
     networks: [saga-net]
@@ -88,11 +90,13 @@ services:
   inventory-service:
     build: ./inventory-service
     container_name: inventory-service
-    ports: ["8082:8082"]
+    ports: ["${INVENTORY_SERVICE_PORT:-8082}:8082"]
     environment:
       <<: *spring-kafka-common
-      PAYMENT_SERVICE_URL: http://payment-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      PAYMENT_SERVICE_URL: ${PAYMENT_SERVICE_URL}
+      NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL}
     depends_on:
       kafka: { condition: service_healthy }
     networks: [saga-net]
@@ -100,9 +104,11 @@ services:
   payment-service:
     build: ./payment-service
     container_name: payment-service
-    ports: ["8083:8083"]
+    ports: ["${PAYMENT_SERVICE_PORT:-8083}:8083"]
     environment:
       <<: *spring-kafka-common
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
     depends_on:
       kafka: { condition: service_healthy }
     networks: [saga-net]
@@ -110,9 +116,13 @@ services:
   notification-service:
     build: ./notification-service
     container_name: notification-service
-    ports: ["8084:8084"]
+    ports: ["${NOTIFICATION_SERVICE_PORT:-8084}:8084"]
     environment:
       <<: *spring-kafka-common
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      EMAIL_SERVICE_URL: ${EMAIL_SERVICE_URL}
+      SMS_SERVICE_URL: ${SMS_SERVICE_URL}
     depends_on:
       kafka: { condition: service_healthy }
     networks: [saga-net]
