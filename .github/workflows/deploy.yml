@@ -44,8 +44,15 @@ jobs:
               "if [ ! -f .env ]; then cp .env.example .env; fi",
               "docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull",
               "docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d",
-              "sleep 15",
-              "for p in 8081 8082 8083 8084; do curl -sf http://localhost:$p/actuator/health || exit 1; done"
+              "echo 'Waiting for services to boot...'",
+              "for p in 8081 8082 8083 8084; do",
+              "  echo 'Checking port '$p;",
+              "  for i in {1..12}; do",
+              "    curl -sf http://localhost:$p/actuator/health && break || echo 'Waiting...';",
+              "    sleep 10;",
+              "  done;",
+              "  curl -sf http://localhost:$p/actuator/health || exit 1;",
+              "done"
             ]}' \
             --query "Command.CommandId" --output text)
 

@@ -1,0 +1,194 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: notification-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:notificationdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE}
+    driver-class-name: org.h2.Driver
+    username: root
+    password: root
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9094}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        retries: 3
+        acks: all
+        compression-type: snappy
+        max-in-flight-requests-per-connection: 5
+    consumer:
+      group-id: notification-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.example.notification.event"
+        spring.json.value.default.type: "com.example.notification.event.SagaEvent"
+        spring.json.use.type.headers: false
+        max-poll-records: 100
+        fetch-min-bytes: 1024
+        fetch-max-wait: 500
+    listener:
+      missing-topics-fatal: false
+      admin:
+        auto-create: true
+      ack-mode: MANUAL_IMMEDIATE
+
+services:
+  email:
+    url: ${EMAIL_SERVICE_URL:https://api.email-provider.com}
+  sms:
+    url: ${SMS_SERVICE_URL:https://api.sms-provider.com}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,circuitbreakerevents,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+    circuitbreakers:
+      enabled: true
+    metrics:
+      enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 50
+        record-exceptions:
+          - java.util.concurrent.TimeoutException
+          - org.apache.kafka.common.errors.TimeoutException
+          - org.springframework.kafka.KafkaException
+          - java.util.concurrent.ExecutionException
+          - com.example.notification.exception.ServiceUnavailableException
+    instances:
+      kafkaPublisher:
+        base-config: default
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+      emailServiceCB:
+        base-config: default
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        slow-call-duration-threshold: 10s
+      smsServiceCB:
+        base-config: default
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 60
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        slow-call-duration-threshold: 10s
+      outboxProcessorCB:
+        base-config: default
+        sliding-window-size: 5
+        minimum-number-of-calls: 3
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 1s
+        retry-exceptions:
+          - java.util.concurrent.TimeoutException
+          - org.apache.kafka.common.errors.TimeoutException
+          - org.springframework.kafka.KafkaException
+          - com.example.notification.exception.ServiceUnavailableException
+          - org.springframework.dao.DataAccessException
+          - org.springframework.dao.OptimisticLockingFailureException
+    instances:
+      kafkaRetry:
+        base-config: default
+        max-attempts: 3
+        wait-duration: 2s
+      emailRetry:
+        base-config: default
+        max-attempts: 3
+        wait-duration: 2s
+        retry-exceptions:
+          - com.example.notification.exception.ServiceUnavailableException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+      smsRetry:
+        base-config: default
+        max-attempts: 3
+        wait-duration: 2s
+        retry-exceptions:
+          - com.example.notification.exception.ServiceUnavailableException
+          - java.net.ConnectException
+          - java.net.SocketTimeoutException
+
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+    instances:
+      kafkaTimeout:
+        base-config: default
+        timeout-duration: 10s
+      emailTimeout:
+        base-config: default
+        timeout-duration: 10s
+      smsTimeout:
+        base-config: default
+        timeout-duration: 10s
+
+logging:
+  level:
+    com.example.notification: DEBUG
+    org.springframework.kafka.retrytopic: INFO
+    io.github.resilience4j: INFO
+    org.springframework.web.client: DEBUG
+    org.springframework.transaction: DEBUG
+    org.hibernate.SQL: DEBUG

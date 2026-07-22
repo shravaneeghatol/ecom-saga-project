@@ -4,12 +4,5 @@
 *.tfstate.backup
 *.tfstate.*.backup
 .terraform.lock.hcl
-Infrastructure/AWS-Deployment-Plan_1.md
+AWS-Deployment-Plan_1.md
 Infrastructure/README.md
-
-# Maven build output - never commit these
-target/
-*/target/
-*.class
-*.jar
-*.war
