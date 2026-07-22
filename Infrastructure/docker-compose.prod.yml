@@ -1,0 +1,59 @@
+# Production override for the free-tier EC2 deployment.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# What this changes vs. the base docker-compose.yml:
+#   1. Pulls pre-built images from Docker Hub (already published by ci.yml)
+#      instead of rebuilding from source on the small EC2 instance.
+#   2. Caps JVM heap size per service so 5 JVMs fit on a 1-2GB instance.
+#   3. Adds restart policies so containers come back after an instance reboot.
+#   4. Removes kafka-ui from the always-on stack (start it on demand only,
+#      via `docker compose -f docker-compose.yml -f docker-compose.prod.yml
+#      --profile debug up -d kafka-ui`, tunneled over SSH/SSM - it has no
+#      built-in authentication).
+#   5. Disables the H2 web console via an env var (requires the corresponding
+#      `spring.h2.console.enabled: ${H2_CONSOLE_ENABLED:true}` change in each
+#      service's application.yml - see Section 6 of the deployment plan).
+
+version: "3.8"
+
+services:
+  kafka:
+    restart: unless-stopped
+    environment:
+      KAFKA_HEAP_OPTS: "-Xmx384m -Xms384m"
+
+  kafka-ui:
+    profiles: []  # always starts - port 8090 is open to the internet via the security group
+
+  order-service:
+    image: nayan0909/order-service:latest
+    build: null
+    restart: unless-stopped
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx256m -Xms128m"
+      H2_CONSOLE_ENABLED: "true"
+
+  inventory-service:
+    image: nayan0909/inventory-service:latest
+    build: null
+    restart: unless-stopped
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx256m -Xms128m"
+      H2_CONSOLE_ENABLED: "true"
+
+  payment-service:
+    image: nayan0909/payment-service:latest
+    build: null
+    restart: unless-stopped
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx256m -Xms128m"
+      H2_CONSOLE_ENABLED: "true"
+
+  notification-service:
+    image: nayan0909/notification-service:latest
+    build: null
+    restart: unless-stopped
+    environment:
+      JAVA_TOOL_OPTIONS: "-Xmx256m -Xms128m"
+      H2_CONSOLE_ENABLED: "true"

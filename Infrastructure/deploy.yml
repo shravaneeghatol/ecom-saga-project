@@ -1,0 +1,66 @@
+# Place this file at .github/workflows/deploy.yml in the repo.
+#
+# Deploys to the EC2 instance via AWS Systems Manager (SSM) send-command -
+# no SSH keys, no open port 22 required. Runs after the existing "CI
+# Pipeline" workflow (ci.yml) succeeds on main, or manually via
+# workflow_dispatch.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   AWS_ROLE_ARN      - IAM role ARN GitHub OIDC assumes (see note below)
+#   AWS_REGION        - e.g. ap-south-1
+#   EC2_INSTANCE_ID   - from `terraform output instance_id`
+#   DOCKERHUB_USERNAME (already exists from ci.yml)
+#
+# One-time setup: create an IAM OIDC identity provider for
+# token.actions.githubusercontent.com and a role trusting it, scoped to
+# ssm:SendCommand / ssm:GetCommandInvocation on this one instance. This
+# avoids storing long-lived AWS access keys as GitHub secrets.
+
+name: Deploy to EC2
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write   # required for OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Configure AWS credentials (OIDC, no static keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Pull latest code, images and restart the stack
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ${{ github.sha }}" \
+            --parameters '{"commands":[
+              "if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi",
+              "cd /home/ec2-user/app",
+              "git fetch origin && git checkout main && git pull origin main",
+              "docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull",
+              "docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d",
+              "sleep 15",
+              "for p in 8081 8082 8083 8084; do curl -sf http://localhost:$p/actuator/health || exit 1; done"
+            ]}' \
+            --query "Command.CommandId" --output text)
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
