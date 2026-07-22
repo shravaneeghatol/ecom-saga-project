@@ -7,6 +7,7 @@ dnf update -y
 dnf install -y docker git amazon-cloudwatch-agent amazon-ssm-agent
 
 systemctl enable --now docker
+systemctl enable --now amazon-ssm-agent
 usermod -aG docker ec2-user
 
 # Docker Compose v2 plugin
