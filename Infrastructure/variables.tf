@@ -26,6 +26,7 @@ variable "root_volume_size_gb" {
 variable "my_ip_cidr" {
   description = "Your public IP in CIDR form (e.g. 203.0.113.4/32), used to restrict SSH and admin ports. Find yours at https://checkip.amazonaws.com"
   type        = string
+  default     = "0.0.0.0/0"
 }
 
 variable "enable_ssh" {
@@ -35,9 +36,9 @@ variable "enable_ssh" {
 }
 
 variable "key_name" {
-  description = "Name of an existing EC2 key pair, only required if enable_ssh = true."
+  description = "The EC2 key pair name to use for SSH access (must exist in AWS)."
   type        = string
-  default     = ""
+  default     = "ecom-saga-key"
 }
 
 variable "expose_kafka_ui" {
