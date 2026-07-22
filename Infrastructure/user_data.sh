@@ -4,7 +4,7 @@
 set -euo pipefail
 
 dnf update -y
-dnf install -y docker git amazon-cloudwatch-agent
+dnf install -y docker git amazon-cloudwatch-agent amazon-ssm-agent
 
 systemctl enable --now docker
 usermod -aG docker ec2-user
