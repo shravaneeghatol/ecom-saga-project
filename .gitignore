@@ -5,4 +5,5 @@
 *.tfstate.*.backup
 .terraform.lock.hcl
 AWS-Deployment-Plan_1.md
-Infrastructure/README.md
+Infrastructure/README.mdtarget/
+.idea/
