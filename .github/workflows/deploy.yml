@@ -56,9 +56,19 @@ jobs:
             ]}' \
             --query "Command.CommandId" --output text)
 
-          aws ssm wait command-executed \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$INSTANCE_ID"
+          # Custom waiter that allows up to 10 minutes instead of the default 100 seconds
+          echo "Waiting for deployment to complete (up to 10 minutes)..."
+          for i in {1..60}; do
+            STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query "Status" --output text)
+            if [ "$STATUS" == "Success" ]; then
+              echo "Command succeeded!"
+              break
+            elif [[ "$STATUS" == "Failed" || "$STATUS" == "TimedOut" || "$STATUS" == "Cancelled" ]]; then
+              echo "Command failed with status: $STATUS"
+              exit 1
+            fi
+            sleep 10
+          done
 
           aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
