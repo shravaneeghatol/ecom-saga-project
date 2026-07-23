@@ -3,7 +3,22 @@
 # Usage: ./scripts/test-saga.sh
 
 set -e
-ORDER_URL="http://localhost:8081/api/orders"
+
+# Try to fetch the EC2 instance IP if it's running
+PUBLIC_IP=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=ecom-saga-app" "Name=instance-state-name,Values=running" \
+  --query "Reservations[0].Instances[0].PublicIpAddress" \
+  --output text 2>/dev/null || echo "")
+
+if [ "$PUBLIC_IP" == "None" ] || [ -z "$PUBLIC_IP" ]; then
+    HOST="localhost"
+    echo "Testing against local environment (localhost)..."
+else
+    HOST="$PUBLIC_IP"
+    echo "Testing against live EC2 environment ($HOST)..."
+fi
+
+ORDER_URL="http://${HOST}:8081/api/orders"
 
 post_order () {
   echo ">> POST $1"
@@ -54,7 +69,7 @@ sleep 2
 echo "============================================================"
 echo "4) TRANSIENT FAILURE in inventory-service - exercises the 3 retry"
 echo "   topics then the DLT topic (order.events-retry-0/1/2, order.events-dlt)."
-echo "   Watch it live in Kafka UI: http://localhost:8090"
+echo "   Watch it live in Kafka UI: http://${HOST}:8090"
 echo "   Order should end CANCELLED after retries are exhausted."
 echo "============================================================"
 post_order '{
@@ -65,8 +80,8 @@ post_order '{
   "simulateTransientErrorAt": "inventory"
 }'
 
-echo "Done. Check http://localhost:8090 (Kafka UI) and:"
-echo "  GET http://localhost:8081/api/orders"
-echo "  GET http://localhost:8082/api/inventory/reservations"
-echo "  GET http://localhost:8083/api/payments"
-echo "  GET http://localhost:8084/api/notifications"
+echo "Done. Check http://${HOST}:8090 (Kafka UI) and:"
+echo "  GET http://${HOST}:8081/api/orders"
+echo "  GET http://${HOST}:8082/api/inventory/reservations"
+echo "  GET http://${HOST}:8083/api/payments"
+echo "  GET http://${HOST}:8084/api/notifications"

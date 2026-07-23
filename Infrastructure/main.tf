@@ -166,6 +166,8 @@ resource "aws_instance" "app" {
   })
 
   tags = { Name = "${var.project_name}-app" }
+
+  depends_on = [aws_cloudwatch_log_group.app]
 }
 
 # ---------------------------------------------------------------------------
@@ -206,4 +208,97 @@ resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   threshold           = 80
   dimensions          = { InstanceId = aws_instance.app.id }
   alarm_description   = "CPU above 80% for 5 consecutive minutes"
+}
+
+# ---------------------------------------------------------------------------
+# CloudWatch Dashboard and Enhanced Metrics
+# ---------------------------------------------------------------------------
+resource "aws_cloudwatch_dashboard" "main" {
+  dashboard_name = "${var.project_name}-dashboard"
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type = "metric"
+        x = 0, y = 0, width = 12, height = 6
+        properties = {
+          metrics = [
+            ["AWS/EC2", "CPUUtilization", "InstanceId", aws_instance.app.id]
+          ]
+          view = "timeSeries"
+          stacked = false
+          region = var.aws_region
+          title = "CPU Utilization"
+        }
+      },
+      {
+        type = "metric"
+        x = 12, y = 0, width = 12, height = 6
+        properties = {
+          metrics = [
+            [var.project_name, "mem_used_percent", "InstanceId", aws_instance.app.id]
+          ]
+          view = "timeSeries"
+          stacked = false
+          region = var.aws_region
+          title = "Memory Utilization (%)"
+        }
+      },
+      {
+        type = "metric"
+        x = 0, y = 6, width = 12, height = 6
+        properties = {
+          metrics = [
+            [var.project_name, "disk_used_percent", "InstanceId", aws_instance.app.id, "path", "/"]
+          ]
+          view = "timeSeries"
+          stacked = false
+          region = var.aws_region
+          title = "Disk Utilization (/) (%)"
+        }
+      },
+      {
+        type = "metric"
+        x = 12, y = 6, width = 12, height = 6
+        properties = {
+          metrics = [
+            ["AWS/EC2", "NetworkIn", "InstanceId", aws_instance.app.id],
+            [".", "NetworkOut", ".", "."]
+          ]
+          view = "timeSeries"
+          stacked = false
+          region = var.aws_region
+          title = "Network Traffic"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_cloudwatch_metric_alarm" "mem_high" {
+  alarm_name          = "${var.project_name}-mem-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 5
+  metric_name         = "mem_used_percent"
+  namespace           = var.project_name
+  period              = 60
+  statistic           = "Average"
+  threshold           = 85
+  dimensions          = { InstanceId = aws_instance.app.id }
+  alarm_description   = "Memory above 85% for 5 consecutive minutes"
+}
+
+resource "aws_cloudwatch_metric_alarm" "disk_high" {
+  alarm_name          = "${var.project_name}-disk-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 5
+  metric_name         = "disk_used_percent"
+  namespace           = var.project_name
+  period              = 60
+  statistic           = "Average"
+  threshold           = 85
+  dimensions          = { 
+    InstanceId = aws_instance.app.id
+    path       = "/" 
+  }
+  alarm_description   = "Disk above 85% for 5 consecutive minutes"
 }
