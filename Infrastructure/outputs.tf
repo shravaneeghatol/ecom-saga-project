@@ -23,6 +23,16 @@ output "service_urls" {
   }
 }
 
+output "swagger_ui_urls" {
+  description = "Swagger UI documentation URLs for each service once deployed"
+  value = {
+    order_service        = "http://${var.allocate_elastic_ip ? join("", aws_eip.app[*].public_ip) : aws_instance.app.public_ip}:8081/swagger-ui.html"
+    inventory_service    = "http://${var.allocate_elastic_ip ? join("", aws_eip.app[*].public_ip) : aws_instance.app.public_ip}:8082/swagger-ui.html"
+    payment_service      = "http://${var.allocate_elastic_ip ? join("", aws_eip.app[*].public_ip) : aws_instance.app.public_ip}:8083/swagger-ui.html"
+    notification_service = "http://${var.allocate_elastic_ip ? join("", aws_eip.app[*].public_ip) : aws_instance.app.public_ip}:8084/swagger-ui.html"
+  }
+}
+
 output "cloudwatch_log_group" {
   value = aws_cloudwatch_log_group.app.name
 }

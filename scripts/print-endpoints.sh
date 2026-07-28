@@ -2,6 +2,17 @@
 
 echo "Fetching the latest public IP of the EC2 instance..."
 
+# Load environment variables if .env exists
+if [ -f .env ]; then
+  # export to make sure variables are available, silencing errors for comments
+  set -a
+  source .env 2>/dev/null
+  set +a
+fi
+
+DB_USER=${SPRING_DATASOURCE_USERNAME:-sa}
+DB_PASS=${SPRING_DATASOURCE_PASSWORD:-<blank>}
+
 # Fetch the public IP of the running EC2 instance tagged with Name=ecom-saga-app
 PUBLIC_IP=$(aws ec2 describe-instances \
   --filters "Name=tag:Name,Values=ecom-saga-app" "Name=instance-state-name,Values=running" \
@@ -26,6 +37,12 @@ echo " Inventory Service Health: http://${PUBLIC_IP}:8082/actuator/health"
 echo " Payment Service Health: http://${PUBLIC_IP}:8083/actuator/health"
 echo " Notification Service Health: http://${PUBLIC_IP}:8084/actuator/health"
 echo ""
+echo " 📚 Swagger UI API Docs:"
+echo " Order Service Swagger: http://${PUBLIC_IP}:8081/swagger-ui.html"
+echo " Inventory Service Swagger: http://${PUBLIC_IP}:8082/swagger-ui.html"
+echo " Payment Service Swagger: http://${PUBLIC_IP}:8083/swagger-ui.html"
+echo " Notification Service Swagger: http://${PUBLIC_IP}:8084/swagger-ui.html"
+echo ""
 echo " 🗄️ H2 Database Consoles:"
 echo " Order Service DB: http://${PUBLIC_IP}:8081/h2-console"
 echo " Inventory Service DB: http://${PUBLIC_IP}:8082/h2-console"
@@ -33,5 +50,5 @@ echo " Payment Service DB: http://${PUBLIC_IP}:8083/h2-console"
 echo " Notification Service DB: http://${PUBLIC_IP}:8084/h2-console"
 echo "==========================================================="
 echo " JDBC URL Pattern for DB Login: jdbc:h2:mem:<dbname>"
-echo " (e.g. jdbc:h2:mem:orderdb, User: sa, Password: <blank>)"
+echo " (e.g. jdbc:h2:mem:orderdb, User: $DB_USER, Password: $DB_PASS)"
 echo "==========================================================="

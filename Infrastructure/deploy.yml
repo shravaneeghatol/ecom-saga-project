@@ -21,7 +21,7 @@ name: Deploy to EC2
 on:
   workflow_run:
     workflows: ["CI Pipeline"]
-    branches: [main]
+    branches: [main, feature-swagger]
     types: [completed]
   workflow_dispatch: {}
 
@@ -42,19 +42,21 @@ jobs:
 
       - name: Pull latest code, images and restart the stack
         run: |
+          TARGET_BRANCH="${{ github.event.workflow_run.head_branch || 'feature-swagger' }}"
+
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy ${{ github.sha }}" \
-            --parameters '{"commands":[
-              "if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi",
-              "cd /home/ec2-user/app",
-              "git fetch origin && git checkout main && git pull origin main",
-              "docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull",
-              "docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d",
-              "sleep 15",
-              "for p in 8081 8082 8083 8084; do curl -sf http://localhost:$p/actuator/health || exit 1; done"
-            ]}' \
+            --parameters "{\"commands\":[
+              \"if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi\",
+              \"cd /home/ec2-user/app\",
+              \"git fetch origin && git checkout $TARGET_BRANCH && git pull origin $TARGET_BRANCH\",
+              \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull\",
+              \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d\",
+              \"sleep 15\",
+              \"for p in 8081 8082 8083 8084; do curl -sf http://localhost:\$p/actuator/health || exit 1; done\"
+            ]}" \
             --query "Command.CommandId" --output text)
 
           aws ssm wait command-executed \

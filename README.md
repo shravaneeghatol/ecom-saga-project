@@ -241,8 +241,8 @@ or `notificationdb`):
 
 ```
 JDBC URL: jdbc:h2:mem:orderdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
-User:     sa
-Password: (leave blank)
+User:     (check your .env file, defaults to root)
+Password: (check your .env file, defaults to root)
 ```
 
 Note: H2 here is **in-memory** — all data is lost whenever a service
