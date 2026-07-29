@@ -19,6 +19,12 @@ PUBLIC_IP=$(aws ec2 describe-instances \
   --query "Reservations[0].Instances[0].PublicIpAddress" \
   --output text)
 
+# Fetch the public IP of the monitoring EC2 instance tagged with Name=ecom-saga-monitoring
+MONITORING_IP=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=ecom-saga-monitoring" "Name=instance-state-name,Values=running" \
+  --query "Reservations[0].Instances[0].PublicIpAddress" \
+  --output text 2>/dev/null || echo "")
+
 if [ "$PUBLIC_IP" == "None" ] || [ -z "$PUBLIC_IP" ]; then
     echo "❌ Error: Could not find a running EC2 instance with tag Name=ecom-saga-app."
     exit 1
@@ -29,7 +35,19 @@ echo "==========================================================="
 echo " 🚀 E-commerce Saga - Live Endpoints"
 echo "==========================================================="
 echo ""
-echo " 🌐 Kafka UI Dashboard: http://${PUBLIC_IP}:8090"
+echo " 🌐 Main App Instance (#1): http://${PUBLIC_IP}"
+echo "    - Kafka UI Dashboard: http://${PUBLIC_IP}:8090"
+echo "    - cAdvisor Metrics:   http://${PUBLIC_IP}:8080"
+echo "    - Node Exporter:      http://${PUBLIC_IP}:9100"
+echo ""
+if [ -n "$MONITORING_IP" ] && [ "$MONITORING_IP" != "None" ]; then
+  echo " 📊 Observability Instance (#2): http://${MONITORING_IP}"
+  echo "    - Grafana Dashboards: http://${MONITORING_IP}:3000 (User: admin / Pass: admin)"
+  echo "    - Prometheus Metrics: http://${MONITORING_IP}:9090"
+  echo "    - Loki Log Engine:    http://${MONITORING_IP}:3100"
+else
+  echo " 📊 Observability Stack (Local): http://localhost:3000 (User: admin / Pass: admin)"
+fi
 echo ""
 echo " 🩺 Health Checks:"
 echo " Order Service Health: http://${PUBLIC_IP}:8081/actuator/health"

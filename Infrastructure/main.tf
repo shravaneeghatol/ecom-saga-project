@@ -62,6 +62,22 @@ resource "aws_security_group" "app" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "Observability Stack (Grafana 3000, Prometheus 9090, Loki 3100)"
+    from_port   = 3000
+    to_port     = 3100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Exporters (cAdvisor 8080, Node Exporter 9100)"
+    from_port   = 8080
+    to_port     = 9100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   dynamic "ingress" {
     for_each = var.enable_ssh ? [1] : []
     content {
@@ -141,7 +157,7 @@ resource "aws_cloudwatch_log_group" "app" {
 }
 
 # ---------------------------------------------------------------------------
-# EC2 instance
+# EC2 instance (Instance #1: Main Application Stack)
 # ---------------------------------------------------------------------------
 resource "aws_instance" "app" {
   ami                    = data.aws_ami.al2023.id
@@ -166,6 +182,36 @@ resource "aws_instance" "app" {
   })
 
   tags = { Name = "${var.project_name}-app" }
+
+  depends_on = [aws_cloudwatch_log_group.app]
+}
+
+# ---------------------------------------------------------------------------
+# EC2 instance (Instance #2: Dedicated Monitoring / Observability Stack)
+# ---------------------------------------------------------------------------
+resource "aws_instance" "monitoring" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = var.instance_type
+  subnet_id              = data.aws_subnets.default.ids[0]
+  vpc_security_group_ids = [aws_security_group.app.id]
+  iam_instance_profile   = aws_iam_instance_profile.instance.name
+  key_name               = var.enable_ssh ? var.key_name : null
+
+  root_block_device {
+    volume_size = var.root_volume_size_gb
+    volume_type = "gp3"
+    encrypted   = true
+  }
+
+  metadata_options {
+    http_tokens = "required" # IMDSv2 only
+  }
+
+  user_data = templatefile("${path.module}/monitoring_user_data.sh", {
+    project_name = var.project_name
+  })
+
+  tags = { Name = "${var.project_name}-monitoring" }
 
   depends_on = [aws_cloudwatch_log_group.app]
 }

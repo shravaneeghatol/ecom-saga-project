@@ -33,6 +33,24 @@ output "swagger_ui_urls" {
   }
 }
 
+output "monitoring_instance_id" {
+  description = "Monitoring EC2 instance ID"
+  value       = aws_instance.monitoring.id
+}
+
+output "monitoring_public_ip" {
+  description = "Public IP address of the monitoring instance"
+  value       = aws_instance.monitoring.public_ip
+}
+
+output "observability_urls" {
+  description = "Observability stack endpoints"
+  value = {
+    grafana    = "http://${aws_instance.monitoring.public_ip}:3000"
+    prometheus = "http://${aws_instance.monitoring.public_ip}:9090"
+  }
+}
+
 output "cloudwatch_log_group" {
   value = aws_cloudwatch_log_group.app.name
 }
