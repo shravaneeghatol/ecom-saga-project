@@ -63,10 +63,9 @@ jobs:
               \"if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi\",
               \"cd /home/ec2-user/app\",
               \"git fetch origin && git checkout $TARGET_BRANCH && git pull origin $TARGET_BRANCH\",
-              \"git checkout -- docker-compose.yml\",
               \"if [ ! -f .env ]; then cp .env.example .env; fi\",
-              \"MONITORING_IP=\$(aws ec2 describe-instances --filters \\\"Name=tag:Name,Values=ecom-saga-monitoring\\\" \\\"Name=instance-state-name,Values=running\\\" --query \\\"Reservations[0].Instances[0].PublicIpAddress\\\" --output text 2>/dev/null || echo \\\"\")\",
-              \"if [ -n \\\"\$MONITORING_IP\\\" ] && [ \\\"\$MONITORING_IP\\\" != \\\"None\\\" ]; then sed -i \\\"/LOKI_URL=/d\\\" .env && echo \\\"LOKI_URL=http://\$MONITORING_IP:3100/loki/api/v1/push\\\" >> .env; fi\",
+              \"chmod +x scripts/*.sh\",
+              \"./scripts/configure-monitoring-ips.sh app\",
               \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull\",
               \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d --force-recreate\",
               \"echo Waiting for services to boot...\",
@@ -132,9 +131,8 @@ jobs:
                 \"if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi\",
                 \"cd /home/ec2-user/app\",
                 \"git fetch origin && git checkout $TARGET_BRANCH && git pull origin $TARGET_BRANCH\",
-                \"git checkout -- config/prometheus.yml\",
-                \"APP_IP=\$(aws ec2 describe-instances --filters \\\"Name=tag:Name,Values=ecom-saga-app\\\" \\\"Name=instance-state-name,Values=running\\\" --query \\\"Reservations[0].Instances[0].PublicIpAddress\\\" --output text 2>/dev/null || echo \\\")\",
-                \"if [ -n \\\"\$APP_IP\\\" ] && [ \\\"\$APP_IP\\\" != \\\"None\\\" ]; then sed -i \\\"s/order-service:8081/\$APP_IP:8081/g; s/inventory-service:8082/\$APP_IP:8082/g; s/payment-service:8083/\$APP_IP:8083/g; s/notification-service:8084/\$APP_IP:8084/g; s/node-exporter:9100/\$APP_IP:9100/g; s/cadvisor:8080/\$APP_IP:8080/g\\\" config/prometheus.yml; fi\",
+                \"chmod +x scripts/*.sh\",
+                \"./scripts/configure-monitoring-ips.sh monitoring\",
                 \"docker compose -f docker-compose.monitoring.yml up -d --force-recreate\"
               ]}"
           fi

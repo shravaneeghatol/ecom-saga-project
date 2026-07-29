@@ -68,6 +68,9 @@ git checkout feature-swagger || git checkout main
 git pull origin feature-swagger || git pull origin main
 if [ ! -f .env ]; then cp .env.example .env; fi
 
-/usr/local/bin/docker-compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d
+chmod +x scripts/*.sh 2>/dev/null || true
+./scripts/configure-monitoring-ips.sh app || true
+
+/usr/local/bin/docker-compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d --force-recreate
 
 echo "Bootstrap complete." > /var/log/bootstrap-done.log
