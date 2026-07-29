@@ -42,6 +42,17 @@ jobs:
 
       - name: Pull latest code, images and restart the stack
         run: |
+          echo "Waiting for instance SSM agent to be online..."
+          for i in {1..12}; do
+            STATUS=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${{ secrets.EC2_INSTANCE_ID }}" --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null || echo "Offline")
+            if [ "$STATUS" == "Online" ]; then
+              echo "SSM agent is Online!"
+              break
+            fi
+            echo "Waiting for SSM agent to register with AWS SSM (attempt $i/12)..."
+            sleep 10
+          done
+
           TARGET_BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name || 'feature-swagger' }}"
 
           COMMAND_ID=$(aws ssm send-command \

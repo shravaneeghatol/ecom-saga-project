@@ -32,6 +32,13 @@ jobs:
           cd ${{ matrix.service }}
           mvn -B clean package
 
+      - name: Upload compiled JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}-jar
+          path: ${{ matrix.service }}/target/*.jar
+          retention-days: 1
+
   # 2. Detect which services have changed files
   detect-changes:
     runs-on: ubuntu-latest
@@ -66,6 +73,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Download compiled JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.service }}-jar
+          path: ./${{ matrix.service }}/target/
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
