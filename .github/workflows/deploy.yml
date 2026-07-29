@@ -33,7 +33,7 @@ jobs:
 
           echo "Deploying to instance: $INSTANCE_ID"
 
-          TARGET_BRANCH="${{ github.event.workflow_run.head_branch || 'feature-swagger' }}"
+          TARGET_BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name || 'feature-swagger' }}"
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \

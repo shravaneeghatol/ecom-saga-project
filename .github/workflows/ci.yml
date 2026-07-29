@@ -5,6 +5,7 @@ on:
     branches: [ main, test, feature-swagger ]
   pull_request:
     branches: [ main, test, feature-swagger ]
+  workflow_dispatch: {}
 
 jobs:
   # 1. Build and test all Java Spring Boot microservices in parallel
@@ -35,7 +36,7 @@ jobs:
   detect-changes:
     runs-on: ubuntu-latest
     outputs:
-      services: ${{ steps.filter.outputs.changes }}
+      services: ${{ github.event_name == 'workflow_dispatch' && '["order-service", "inventory-service", "payment-service", "notification-service"]' || steps.filter.outputs.changes }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -54,11 +55,11 @@ jobs:
             notification-service:
               - 'notification-service/**'
 
-  # 3. Build and push individual Docker images to Docker Hub (on push to main/test/feature-swagger branches for changed services)
+  # 3. Build and push individual Docker images to Docker Hub (on push / workflow_dispatch for main/test/feature-swagger branches)
   build-and-push-docker:
     runs-on: ubuntu-latest
     needs: [build-and-test, detect-changes]
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/feature-swagger') && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != '' }}
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/test' || github.ref == 'refs/heads/feature-swagger') && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != '' }}
     strategy:
       matrix:
         service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
