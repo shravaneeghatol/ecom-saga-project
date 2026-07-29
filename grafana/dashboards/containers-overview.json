@@ -17,7 +17,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[1m])) by (name) * 100",
+          "expr": "sum(rate(container_cpu_usage_seconds_total{name=~\".+\"}[1m])) by (name) * 100",
           "legendFormat": "{{name}}"
         }
       ],
@@ -35,7 +35,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(container_memory_working_set_bytes{name!=\"\"}) by (name) / 1024 / 1024",
+          "expr": "sum(container_memory_working_set_bytes{name=~\".+\"}) by (name) / 1024 / 1024",
           "legendFormat": "{{name}}"
         }
       ],
@@ -53,7 +53,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(container_network_receive_bytes_total{name!=\"\"}[1m])) by (name) / 1024",
+          "expr": "sum(rate(container_network_receive_bytes_total{name=~\".+\"}[1m])) by (name) / 1024",
           "legendFormat": "{{name}}"
         }
       ],
@@ -71,7 +71,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(rate(container_network_transmit_bytes_total{name!=\"\"}[1m])) by (name) / 1024",
+          "expr": "sum(rate(container_network_transmit_bytes_total{name=~\".+\"}[1m])) by (name) / 1024",
           "legendFormat": "{{name}}"
         }
       ],
