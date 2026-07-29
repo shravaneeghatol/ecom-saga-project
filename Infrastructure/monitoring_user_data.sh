@@ -25,7 +25,7 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# Clone repo and start Monitoring Stack automatically on first boot
+# Clone repo
 mkdir -p /home/ec2-user/app
 if [ ! -d /home/ec2-user/app/.git ]; then
   git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app
@@ -36,9 +36,12 @@ git fetch origin
 git checkout feature-swagger || git checkout main
 git pull origin feature-swagger || git pull origin main
 
-chmod +x scripts/*.sh 2>/dev/null || true
-./scripts/configure-monitoring-ips.sh monitoring || true
+chmod +x scripts/*.sh
 
-/usr/local/bin/docker-compose -f docker-compose.monitoring.yml up -d --force-recreate
+# Configure Prometheus to scrape Instance #1 (retries until Instance #1 is up)
+./scripts/configure-monitoring-ips.sh monitoring
+
+# Start Monitoring Stack
+/usr/local/bin/docker-compose -f docker-compose.monitoring.yml up -d
 
 echo "Monitoring host bootstrap complete." > /var/log/bootstrap-done.log

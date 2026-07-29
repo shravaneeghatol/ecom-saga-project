@@ -56,7 +56,7 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# Clone repo and start App Stack automatically on first boot
+# Clone repo
 mkdir -p /home/ec2-user/app
 if [ ! -d /home/ec2-user/app/.git ]; then
   git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app
@@ -66,11 +66,14 @@ cd /home/ec2-user/app
 git fetch origin
 git checkout feature-swagger || git checkout main
 git pull origin feature-swagger || git pull origin main
+
 if [ ! -f .env ]; then cp .env.example .env; fi
+chmod +x scripts/*.sh
 
-chmod +x scripts/*.sh 2>/dev/null || true
-./scripts/configure-monitoring-ips.sh app || true
+# Configure Promtail to ship logs to the monitoring instance
+./scripts/configure-monitoring-ips.sh app
 
-/usr/local/bin/docker-compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d --force-recreate
+# Start the App Stack
+/usr/local/bin/docker-compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d
 
 echo "Bootstrap complete." > /var/log/bootstrap-done.log
