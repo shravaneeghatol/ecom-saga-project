@@ -100,6 +100,20 @@ jobs:
             --instance-id "${{ secrets.EC2_INSTANCE_ID }}"
 
           # Deploy Observability Stack to Monitoring Instance #2
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=ecom-saga-app" \
+                      "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
+            echo "❌ Error: No running EC2 instance found with tag Name=ecom-saga-app!"
+            echo "Please run 'cd Infrastructure && terraform apply -auto-approve' to launch the EC2 instances first."
+            exit 1
+          fi
+
+          echo "Deploying to instance: $INSTANCE_ID"
+
           MONITORING_INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=ecom-saga-monitoring" \
                       "Name=instance-state-name,Values=running" \
