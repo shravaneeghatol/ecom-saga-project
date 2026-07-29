@@ -86,6 +86,21 @@ jobs:
             --output text 2>/dev/null || echo "")
 
           if [ -n "$MONITORING_INSTANCE_ID" ] && [ "$MONITORING_INSTANCE_ID" != "None" ]; then
+            echo "Waiting for Monitoring Instance $MONITORING_INSTANCE_ID SSM agent to register Online..."
+            for i in {1..30}; do
+              PING_STATUS=$(aws ssm describe-instance-information \
+                --filters "Key=InstanceIds,Values=$MONITORING_INSTANCE_ID" \
+                --query "InstanceInformationList[0].PingStatus" \
+                --output text 2>/dev/null || echo "Offline")
+
+              if [ "$PING_STATUS" == "Online" ]; then
+                echo "Monitoring Instance SSM agent is Online!"
+                break
+              fi
+              echo "Monitoring SSM agent status: $PING_STATUS. Retrying in 10s... ($i/30)"
+              sleep 10
+            done
+
             echo "Deploying Observability Stack to Monitoring Instance: $MONITORING_INSTANCE_ID"
             aws ssm send-command \
               --instance-ids "$MONITORING_INSTANCE_ID" \

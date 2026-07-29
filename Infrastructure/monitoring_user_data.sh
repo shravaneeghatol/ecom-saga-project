@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bootstraps Docker + Docker Compose + Observability Stack on Instance #2.
+# Bootstraps Docker + Docker Compose + Observability Stack on Instance #2 automatically.
 set -euo pipefail
 
 dnf update -y
@@ -24,5 +24,18 @@ if [ ! -f /swapfile ]; then
   swapon /swapfile
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
+
+# Clone repo and start Monitoring Stack automatically on first boot
+mkdir -p /home/ec2-user/app
+if [ ! -d /home/ec2-user/app/.git ]; then
+  git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app
+fi
+
+cd /home/ec2-user/app
+git fetch origin
+git checkout feature-swagger || git checkout main
+git pull origin feature-swagger || git pull origin main
+
+/usr/local/bin/docker-compose -f docker-compose.monitoring.yml up -d
 
 echo "Monitoring host bootstrap complete." > /var/log/bootstrap-done.log
