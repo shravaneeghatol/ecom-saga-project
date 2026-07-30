@@ -39,14 +39,14 @@ jobs:
           echo "Deploying App Stack to instance: $INSTANCE_ID"
 
           # ── Wait for SSM agent ────────────────────────────────────────────────
-          for i in $(seq 1 30); do
+          for i in $(seq 1 12); do
             PING=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || echo "Offline")
             [ "$PING" == "Online" ] && echo "SSM agent Online!" && break
-            echo "SSM agent status: $PING. Waiting 10s... ($i/30)"
-            sleep 10
+            echo "SSM agent status: $PING. Waiting 3s... ($i/12)"
+            sleep 3
           done
 
           # ── Determine target branch ───────────────────────────────────────────
@@ -74,26 +74,25 @@ jobs:
               \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull\",
               \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d --force-recreate\",
               \"echo Waiting for services to start...\",
-              \"sleep 20\",
-              \"for p in 8081 8082 8083 8084; do echo Checking port \$p; for i in {1..24}; do curl -sf http://localhost:\$p/actuator/health && break || sleep 10; done; done\",
+              \"for i in {1..30}; do if curl -sf http://localhost:8081/actuator/health && curl -sf http://localhost:8082/actuator/health && curl -sf http://localhost:8083/actuator/health && curl -sf http://localhost:8084/actuator/health; then echo All microservices healthy!; break; fi; sleep 3; done\",
               \"echo App Stack deployment complete\"
             ]}" \
             --query "Command.CommandId" --output text)
 
-          echo "Waiting for App Stack deployment to complete (up to 10 min)..."
-          for i in $(seq 1 60); do
+          echo "Waiting for App Stack deployment to complete..."
+          for i in $(seq 1 100); do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$INSTANCE_ID" \
               --query "Status" --output text 2>/dev/null || echo "Pending")
-            echo "  Status: $STATUS ($i/60)"
+            echo "  Status: $STATUS ($i/100)"
             [ "$STATUS" == "Success" ] && echo "✅ App Stack deployed!" && break
             if [[ "$STATUS" == "Failed" || "$STATUS" == "TimedOut" || "$STATUS" == "Cancelled" ]]; then
               echo "❌ Deployment failed: $STATUS"
               aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"
               exit 1
             fi
-            sleep 10
+            sleep 3
           done
 
       - name: Deploy Monitoring Stack to Instance #2
@@ -112,14 +111,14 @@ jobs:
           echo "Deploying Monitoring Stack to instance: $MONITORING_INSTANCE_ID"
 
           # ── Wait for SSM agent ────────────────────────────────────────────────
-          for i in $(seq 1 30); do
+          for i in $(seq 1 12); do
             PING=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$MONITORING_INSTANCE_ID" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || echo "Offline")
             [ "$PING" == "Online" ] && echo "Monitoring SSM agent Online!" && break
-            echo "Monitoring SSM status: $PING. Waiting 10s... ($i/30)"
-            sleep 10
+            echo "Monitoring SSM status: $PING. Waiting 3s... ($i/12)"
+            sleep 3
           done
 
           # ── Determine target branch ───────────────────────────────────────────
@@ -148,18 +147,18 @@ jobs:
             ]}" \
             --query "Command.CommandId" --output text)
 
-          echo "Waiting for Monitoring Stack deployment to complete (up to 10 min)..."
-          for i in $(seq 1 60); do
+          echo "Waiting for Monitoring Stack deployment to complete..."
+          for i in $(seq 1 100); do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$MONITORING_CMD_ID" \
               --instance-id "$MONITORING_INSTANCE_ID" \
               --query "Status" --output text 2>/dev/null || echo "Pending")
-            echo "  Status: $STATUS ($i/60)"
+            echo "  Status: $STATUS ($i/100)"
             [ "$STATUS" == "Success" ] && echo "✅ Monitoring Stack deployed!" && break
             if [[ "$STATUS" == "Failed" || "$STATUS" == "TimedOut" || "$STATUS" == "Cancelled" ]]; then
               echo "❌ Monitoring deployment failed: $STATUS"
               aws ssm get-command-invocation --command-id "$MONITORING_CMD_ID" --instance-id "$MONITORING_INSTANCE_ID"
               exit 1
             fi
-            sleep 10
+            sleep 3
           done
