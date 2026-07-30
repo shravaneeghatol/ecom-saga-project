@@ -5,7 +5,13 @@ on:
     branches: [ main, test, feature-swagger ]
   pull_request:
     branches: [ main, test, feature-swagger ]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_build_all:
+        description: 'Force build and push all Docker images'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   # 1. Build and test all Java Spring Boot microservices in parallel
