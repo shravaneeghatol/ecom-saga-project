@@ -133,6 +133,23 @@ resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
+# Inline policy: allow EC2 instances to describe other EC2 instances
+# Needed by configure-monitoring-ips.sh to discover peer instance IPs at boot/deploy time
+resource "aws_iam_role_policy" "ec2_describe" {
+  name = "${var.project_name}-ec2-describe"
+  role = aws_iam_role.instance.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["ec2:DescribeInstances"]
+      Resource = "*"
+    }]
+  })
+}
+
+
 resource "aws_iam_role_policy_attachment" "ssm_managed" {
   role       = aws_iam_role.instance.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"

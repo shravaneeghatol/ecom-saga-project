@@ -24,7 +24,7 @@ jobs:
 
       - name: Deploy App Stack to Instance #1
         run: |
-          # ── Resolve Instance #1 by Name tag ──────────────────────────────────
+          # ── Resolve both Instance IDs and IPs in runner (single AWS call each) ──
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=ecom-saga-app" \
                       "Name=instance-state-name,Values=running" \
@@ -36,7 +36,14 @@ jobs:
             echo "Run: cd Infrastructure && terraform apply -auto-approve"
             exit 1
           fi
-          echo "Deploying App Stack to instance: $INSTANCE_ID"
+
+          # Resolve monitoring IP here (runner has IAM access) so EC2 never needs to call AWS
+          MONITORING_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=ecom-saga-monitoring" \
+                      "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text 2>/dev/null || echo "")
+          echo "Deploying App Stack to instance: $INSTANCE_ID (Monitoring IP: $MONITORING_IP)"
 
           # ── Wait for SSM agent ────────────────────────────────────────────────
           for i in $(seq 1 12); do
@@ -65,16 +72,11 @@ jobs:
               \"set -e\",
               \"if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi\",
               \"cd /home/ec2-user/app\",
-              \"git fetch origin\",
-              \"git checkout ${TARGET_BRANCH} || git checkout main\",
-              \"git pull origin ${TARGET_BRANCH} || git pull origin main\",
+              \"git fetch origin && git checkout ${TARGET_BRANCH} && git pull origin ${TARGET_BRANCH}\",
               \"if [ ! -f .env ]; then cp .env.example .env; fi\",
-              \"chmod +x scripts/*.sh\",
-              \"./scripts/configure-monitoring-ips.sh app\",
-              \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml pull\",
+              \"if [ -n '${MONITORING_IP}' ] && [ '${MONITORING_IP}' != 'None' ]; then sed -i '/^LOKI_URL=/d' .env && echo LOKI_URL=http://${MONITORING_IP}:3100/loki/api/v1/push >> .env; fi\",
               \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d --force-recreate\",
-              \"echo Waiting for services to start...\",
-              \"for i in {1..30}; do if curl -sf http://localhost:8081/actuator/health && curl -sf http://localhost:8082/actuator/health && curl -sf http://localhost:8083/actuator/health && curl -sf http://localhost:8084/actuator/health; then echo All microservices healthy!; break; fi; sleep 3; done\",
+              \"for i in {1..20}; do if curl -sf http://localhost:8081/actuator/health && curl -sf http://localhost:8082/actuator/health && curl -sf http://localhost:8083/actuator/health && curl -sf http://localhost:8084/actuator/health; then echo All services healthy!; exit 0; fi; sleep 3; done\",
               \"echo App Stack deployment complete\"
             ]}" \
             --query "Command.CommandId" --output text)
@@ -128,6 +130,14 @@ jobs:
           fi
           echo "Target branch: $TARGET_BRANCH"
 
+          # Resolve app IP in runner (has IAM access) - no AWS calls needed on EC2
+          APP_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=ecom-saga-app" \
+                      "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text 2>/dev/null || echo "")
+          echo "App Instance IP: $APP_IP"
+
           # ── Send deployment command to Instance #2 ────────────────────────────
           MONITORING_CMD_ID=$(aws ssm send-command \
             --instance-ids "$MONITORING_INSTANCE_ID" \
@@ -137,11 +147,9 @@ jobs:
               \"set -e\",
               \"if [ ! -d /home/ec2-user/app/.git ]; then git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app; fi\",
               \"cd /home/ec2-user/app\",
-              \"git fetch origin\",
-              \"git checkout ${TARGET_BRANCH} || git checkout main\",
-              \"git pull origin ${TARGET_BRANCH} || git pull origin main\",
-              \"chmod +x scripts/*.sh\",
-              \"./scripts/configure-monitoring-ips.sh monitoring\",
+              \"git fetch origin && git checkout ${TARGET_BRANCH} && git pull origin ${TARGET_BRANCH}\",
+              \"git checkout -- config/prometheus.yml\",
+              \"sed -i 's|order-service:8081|${APP_IP}:8081|g; s|inventory-service:8082|${APP_IP}:8082|g; s|payment-service:8083|${APP_IP}:8083|g; s|notification-service:8084|${APP_IP}:8084|g; s|node-exporter:9100|${APP_IP}:9100|g; s|cadvisor:8080|${APP_IP}:8080|g' config/prometheus.yml\",
               \"docker compose -f docker-compose.monitoring.yml up -d --force-recreate\",
               \"echo Monitoring Stack deployment complete\"
             ]}" \
