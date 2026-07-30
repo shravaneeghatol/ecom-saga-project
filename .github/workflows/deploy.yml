@@ -75,7 +75,7 @@ jobs:
               \"docker compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d --force-recreate\",
               \"echo Waiting for services to start...\",
               \"sleep 20\",
-              \"for p in 8081 8082 8083 8084; do for i in \\$(seq 1 24); do curl -sf http://localhost:\\$p/actuator/health && break || sleep 10; done; done\",
+              \"for p in 8081 8082 8083 8084; do echo Checking port \$p; for i in {1..24}; do curl -sf http://localhost:\$p/actuator/health && break || sleep 10; done; done\",
               \"echo App Stack deployment complete\"
             ]}" \
             --query "Command.CommandId" --output text)
