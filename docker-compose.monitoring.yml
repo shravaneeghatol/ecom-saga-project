@@ -1,0 +1,56 @@
+version: "3.8"
+
+services:
+  # --------------------------------------------------------------------
+  # Prometheus Time-Series Metrics Database (Port 9090)
+  # --------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks: [saga-net]
+
+  # --------------------------------------------------------------------
+  # Grafana Loki Log Indexing Engine (Port 3100)
+  # --------------------------------------------------------------------
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./config/loki-config.yml:/etc/loki/config.yml:ro
+    command: -config.file=/etc/loki/config.yml
+    networks: [saga-net]
+
+  # --------------------------------------------------------------------
+  # Grafana Dashboard UI (Port 3000) - Pre-configured auto-dashboards
+  # --------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks: [saga-net]
+
+networks:
+  saga-net:
+    name: saga-net
+    driver: bridge

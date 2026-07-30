@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'E-commerce Saga Dashboards'
+    orgId: 1
+    folder: 'Saga Microservices'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/dashboards

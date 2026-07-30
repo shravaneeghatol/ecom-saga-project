@@ -1,6 +1,5 @@
 #!/bin/bash
-# Bootstraps Docker + Docker Compose + CloudWatch Agent on first boot.
-# Amazon Linux 2023 assumed (matches the AMI data source in main.tf).
+# Bootstraps Docker + Docker Compose + App Stack + CloudWatch Agent on first boot.
 set -euo pipefail
 
 dnf update -y
@@ -17,8 +16,7 @@ curl -SL "https://github.com/docker/compose/releases/latest/download/docker-comp
 chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ln -sf /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
-# Minimal CloudWatch Agent config: ship system metrics + docker logs.
-# Adjust the log_group_name below to match aws_cloudwatch_log_group.app in main.tf.
+# Minimal CloudWatch Agent config
 cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWCONFIG'
 {
   "metrics": {
@@ -45,14 +43,11 @@ cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWCON
 }
 CWCONFIG
 
-# Use the agent control utility to load the config and start the agent.
-# This is required to ensure the custom JSON config above is actually loaded;
-# `systemctl enable --now` alone only starts the agent without applying config.
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
   -a fetch-config -m ec2 -s \
   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
-# Add a swap file - cheap insurance against OOM kills on small instance types.
+# Add swap file for memory safety
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
@@ -61,7 +56,24 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# NOTE: application deployment itself is intentionally left to the CI/CD
-# pipeline (see ci-cd/deploy.yml) or a manual `git clone` + `docker compose up -d`,
-# so that redeploys don't require re-running Terraform / rebooting the instance.
-echo "Bootstrap complete. Clone the app repo and run docker compose to deploy." > /var/log/bootstrap-done.log
+# Clone repo
+mkdir -p /home/ec2-user/app
+if [ ! -d /home/ec2-user/app/.git ]; then
+  git clone https://github.com/shravaneeghatol/ecom-saga-project.git /home/ec2-user/app
+fi
+
+cd /home/ec2-user/app
+git fetch origin
+git checkout feature-swagger || git checkout main
+git pull origin feature-swagger || git pull origin main
+
+if [ ! -f .env ]; then cp .env.example .env; fi
+chmod +x scripts/*.sh
+
+# Configure Promtail to ship logs to the monitoring instance
+./scripts/configure-monitoring-ips.sh app
+
+# Start the App Stack
+/usr/local/bin/docker-compose -f docker-compose.yml -f Infrastructure/docker-compose.prod.yml up -d
+
+echo "Bootstrap complete." > /var/log/bootstrap-done.log
