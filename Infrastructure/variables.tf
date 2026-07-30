@@ -47,12 +47,6 @@ variable "expose_kafka_ui" {
   default     = true
 }
 
-variable "allocate_elastic_ip" {
-  description = "If true, allocates and associates an Elastic IP (free while attached to a running instance)."
-  type        = bool
-  default     = false
-}
-
 variable "log_retention_days" {
   description = "CloudWatch Logs retention in days. Keep short to avoid silent storage growth."
   type        = number

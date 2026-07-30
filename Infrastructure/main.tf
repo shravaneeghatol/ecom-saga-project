@@ -138,11 +138,6 @@ resource "aws_iam_role_policy_attachment" "ssm_managed" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-resource "aws_iam_role_policy_attachment" "ecr_read" {
-  role       = aws_iam_role.instance.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
 resource "aws_iam_instance_profile" "instance" {
   name = "${var.project_name}-instance-profile"
   role = aws_iam_role.instance.name
@@ -214,18 +209,6 @@ resource "aws_instance" "monitoring" {
   tags = { Name = "${var.project_name}-monitoring" }
 
   depends_on = [aws_cloudwatch_log_group.app]
-}
-
-# ---------------------------------------------------------------------------
-# Elastic IP - free only while attached to a RUNNING instance. If you stop
-# the instance to save money, either release the EIP or accept the small
-# hourly charge for an unattached/idle one.
-# ---------------------------------------------------------------------------
-resource "aws_eip" "app" {
-  count    = var.allocate_elastic_ip ? 1 : 0
-  instance = aws_instance.app.id
-  domain   = "vpc"
-  tags     = { Name = "${var.project_name}-eip" }
 }
 
 # EC2 status-check auto-recovery alarm - free, self-healing on instance
