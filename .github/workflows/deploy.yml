@@ -46,15 +46,20 @@ jobs:
           echo "Deploying App Stack to instance: $INSTANCE_ID (Monitoring IP: $MONITORING_IP)"
 
           # ── Wait for SSM agent ────────────────────────────────────────────────
-          for i in $(seq 1 12); do
+          for i in $(seq 1 30); do
             PING=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || echo "Offline")
             [ "$PING" == "Online" ] && echo "SSM agent Online!" && break
-            echo "SSM agent status: $PING. Waiting 3s... ($i/12)"
-            sleep 3
+            echo "SSM agent status: $PING. Waiting 10s... ($i/30)"
+            sleep 10
           done
+
+          if [ "$PING" != "Online" ]; then
+            echo "❌ SSM agent on $INSTANCE_ID is not online. Cannot deploy."
+            exit 1
+          fi
 
           # ── Determine target branch ───────────────────────────────────────────
           TARGET_BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
@@ -115,15 +120,20 @@ jobs:
           echo "Deploying Monitoring Stack to instance: $MONITORING_INSTANCE_ID"
 
           # ── Wait for SSM agent ────────────────────────────────────────────────
-          for i in $(seq 1 12); do
+          for i in $(seq 1 30); do
             PING=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$MONITORING_INSTANCE_ID" \
               --query "InstanceInformationList[0].PingStatus" \
               --output text 2>/dev/null || echo "Offline")
             [ "$PING" == "Online" ] && echo "Monitoring SSM agent Online!" && break
-            echo "Monitoring SSM status: $PING. Waiting 3s... ($i/12)"
-            sleep 3
+            echo "Monitoring SSM status: $PING. Waiting 10s... ($i/30)"
+            sleep 10
           done
+
+          if [ "$PING" != "Online" ]; then
+            echo "❌ Monitoring SSM agent on $MONITORING_INSTANCE_ID is not online. Cannot deploy."
+            exit 1
+          fi
 
           # ── Determine target branch ───────────────────────────────────────────
           TARGET_BRANCH="${{ github.event.workflow_run.head_branch || github.ref_name }}"
