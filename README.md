@@ -249,37 +249,59 @@ Note: H2 here is **in-memory** — all data is lost whenever a service
 container/process restarts. There's no separate DB container or volume
 to manage; the database lives entirely inside each service's own JVM.
 
-## Project layout
+## Project & Infrastructure Layout
 
 ```
-docker-compose.yml          # Kafka (KRaft) + Kafka UI + 4 services (each with embedded H2)
+.github/workflows/
+  ci.yml                       # CI Pipeline: Builds Java jars, Docker images & pushes to Docker Hub
+  deploy.yml                   # CD Pipeline: Deploys App Stack & Monitoring Stack via AWS SSM
+config/
+  prometheus.yml               # Scrape configuration for Prometheus metrics (Instance #2)
+  promtail-config.yml          # Docker log harvesting config for Promtail (Instance #1)
+  loki-config.yml              # Log aggregation storage & retention engine config for Loki
+grafana/
+  provisioning/datasources/    # Auto-registers Prometheus and Loki datasources in Grafana
+  provisioning/dashboards/     # Auto-provisions Grafana dashboards from JSON files
+  dashboards/
+    containers-overview.json   # Docker container CPU/RAM/Network dashboard (cAdvisor)
+    system-node.json           # Host system CPU/RAM/Disk dashboard (Node Exporter)
+    logs-explorer.json         # Real-time log streaming explorer (Loki)
+Infrastructure/
+  main.tf                      # Terraform IaC: VPC, Security Groups, IAM Roles, 2 EC2 instances, Alarms
+  variables.tf                 # Configurable deployment parameters (region, instance type, IP whitelist)
+  outputs.tf                   # Terraform output links (Public IPs, Swagger UI, H2 Consoles, SSH commands)
+  user_data.sh                 # EC2 Instance #1 bootstrap (Docker, SSM Agent, CloudWatch Agent, Swap space)
+  monitoring_user_data.sh      # EC2 Instance #2 bootstrap (Docker, SSM Agent, CloudWatch Agent, Swap space)
+  docker-compose.prod.yml      # Production compose overlay for Instance #1 app containers
+terraform.tfstate              # Terraform state file mapping local IaC code to live AWS resources
+scripts/
+  configure-monitoring-ips.sh  # Dynamic IP discovery helper for 2-instance networking
+  print-endpoints.sh           # Utility script to query live AWS IPs and print service endpoints
+  test-saga.sh                 # End-to-end integration test runner for Saga & Outbox flows
+docker-compose.yml             # Local/App Stack: Kafka (KRaft) + Kafka UI + 4 Spring Boot Microservices
+docker-compose.monitoring.yml  # Observability Stack: Prometheus + Loki + Grafana
 order-service/
 inventory-service/
 payment-service/
 notification-service/
-  src/main/java/com/example/<svc>/
-    config/KafkaTopicConfig.java     # declares this service's main topic
-    config/CircuitBreakerConfig.java # logs kafkaPublisher breaker state transitions
-    domain/                          # JPA entities incl. OutboxEvent
-    event/SagaEvent.java             # generic event envelope
-    repository/
-    service/OutboxPublisher.java     # the outbox poller
-    service/KafkaEventSender.java    # circuit-breaker-wrapped Kafka send (separate bean, see below)
-    service/<Svc>Service.java        # business logic + outbox writes
-    listener/SagaEventListener.java  # @KafkaListener / @RetryableTopic / @DltHandler
-    controller/                      # simple REST inspection endpoints
-scripts/test-saga.sh
 ```
+
+### Detailed Role of Deployment Files & Folders
+
+| Folder / File | Primary Purpose | Key Details |
+|---|---|---|
+| **`.github/workflows/`** | CI/CD Automation | Contains `ci.yml` (builds and pushes Docker images) and `deploy.yml` (authenticates via AWS OIDC and deploys to EC2 using SSM). |
+| **`config/`** | Observability Configurations | Holds `prometheus.yml` (metric scrape targets), `promtail-config.yml` (log collection), and `loki-config.yml` (log storage). |
+| **`grafana/`** | Grafana Dashboards & Datasources | Auto-wires Prometheus and Loki data sources and provisions pre-built performance/log dashboards on startup. |
+| **`Infrastructure/`** | Infrastructure as Code (IaC) | Declarative HCL code for provisioning 2 EC2 instances, IAM roles, security groups, swap space, and CloudWatch alarms. |
+| **`terraform.tfstate`** | Terraform State Database | JSON file recording the exact mapping between your local Terraform code and real-world AWS infrastructure IDs. |
+
+---
 
 ## Things deliberately simplified for a demo
 
 - `spring.jpa.hibernate.ddl-auto=update` auto-creates tables; use Flyway/Liquibase in production.
-- Each service uses an embedded H2 **in-memory** database instead of a real
-  RDBMS — convenient for running this demo with zero external DB setup, but
-  data doesn't survive a restart and H2 isn't what you'd run in production
-  (swap back to Postgres/MySQL + a real volume for that).
+- Each service uses an embedded H2 **in-memory** database instead of a real RDBMS — convenient for running this demo with zero external DB setup, but data doesn't survive a restart.
 - The "payment gateway" and "notification provider" are simulated in-process.
-- No idempotency dedupe table on consumers (at-least-once delivery is handled
-  via status checks like "already CANCELLED" rather than a full inbox pattern)
-  — for production, pair the Outbox pattern with an Inbox/idempotency table.
+- No idempotency dedupe table on consumers (at-least-once delivery is handled via status checks).
 - Single Kafka broker / single partition replica — fine for a demo, not for HA.
